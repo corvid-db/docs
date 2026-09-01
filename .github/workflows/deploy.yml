@@ -29,7 +29,7 @@ jobs:
 
       # Enables GitHub Pages (if not yet) with the gh-pages branch / root
       # as source. Idempotent.
-      - name: Configure Pages (source: gh-pages branch)
+      - name: "Configure Pages (source: gh-pages branch)"
         id: pages
         uses: actions/configure-pages@v5
         with:
