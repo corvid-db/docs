@@ -16,6 +16,8 @@ concurrency:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
   deploy:
@@ -24,6 +26,22 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+
+      # Enables GitHub Pages (if not yet) with the gh-pages branch / root
+      # as source. Idempotent.
+      - name: Configure Pages (source: gh-pages branch)
+        id: pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - name: Set Pages source to gh-pages branch
+        run: |
+          gh api repos/${GITHUB_REPOSITORY}/pages -X PUT \
+            -f 'source[branch]=gh-pages' -f 'source[path]=/' || \
+          gh api repos/${GITHUB_REPOSITORY}/pages -X POST \
+            -f 'source[branch]=gh-pages' -f 'source[path]=/'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
