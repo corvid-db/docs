@@ -14,13 +14,19 @@ panicking or interleaving by key.
 
 ```text
 1. comparable values    (in value order)
-2. incomparable values  (bools, containers, vectors, NaN — stable by key)
+2. incomparable values  (bools, containers, vectors, NaN — kind tag first,
+                         then key)
 3. rows missing the field (stable by key)
 ```
 
-Ties inside a class break by key. `descending` reverses the value order
-**within the comparable class only** — the class order
-(comparable < incomparable < missing) is fixed in both directions.
+Ties inside a class break by key. Within the incomparable class, a **kind
+tag** orders the values first — NaN is a numeric kind, so it precedes the
+other incomparable kinds (bools, containers, vectors), which then fall to
+key order among themselves. `descending` reverses the within-class order —
+kind tag and value together — in **both** the comparable and the
+incomparable class; the class order
+(comparable < incomparable < missing) and the key tiebreak are fixed, so
+incomparable and missing values always sort last.
 
 ## The comparable class
 

@@ -33,10 +33,11 @@ use std::collections::BTreeMap;
 let db = Db::open("notes.corvid")?;
 let notes = db.collection("notes");
 
-fn note(title: &str, body: &str, tags: &[&str], embedding: Vec<f32>) -> Value {
+fn note(title: &str, body: &str, source: &str, tags: &[&str], embedding: Vec<f32>) -> Value {
     let mut m = BTreeMap::new();
     m.insert("title".into(), Value::Text(title.into()));
     m.insert("body".into(), Value::Text(body.into()));
+    m.insert("source".into(), Value::Text(source.into()));
     m.insert("tags".into(), Value::Array(
         tags.iter().map(|t| Value::Text((*t).into())).collect()));
     m.insert("embedding".into(), Value::Vector(embedding));
@@ -45,10 +46,10 @@ fn note(title: &str, body: &str, tags: &[&str], embedding: Vec<f32>) -> Value {
 
 notes.insert(b"n1", &note(
     "HNSW graphs", "Hierarchical navigable small world graphs index vectors for approximate search",
-    &["vector", "search"], vec![0.1, 0.9, 0.2]))?;
+    "imported", &["vector", "search"], vec![0.1, 0.9, 0.2]))?;
 notes.insert(b"n2", &note(
     "BM25 in one page", "BM25 ranks documents by term frequency, inverse document frequency, and length",
-    &["search", "text"], vec![0.9, 0.1, 0.4]))?;
+    "manual", &["search", "text"], vec![0.9, 0.1, 0.4]))?;
 // … more documents …
 # Ok::<(), corvid::Error>(())
 ```
@@ -83,7 +84,7 @@ let query_txt = "vector search index";
 
 let rows = notes
     .query()
-    .filter(field("tags").contains("search"))
+    .filter(field("source").eq(Value::Text("imported".into())))
     .vector("embedding", query_vec, 100, Metric::Cosine)
     .text("body", query_txt, 100)
     .fuse_rrf(60.0)
@@ -99,8 +100,14 @@ What each stage does:
 
 1. **`filter`** runs first. It is a true predicate: the candidate set for
    ranking is exactly the matching documents — the top-k is never computed
-   over documents the filter would reject. (With a scalar index on the
-   filtered field, this step is sub-linear.)
+   over documents the filter would reject. Here only the `imported` notes
+   survive (`n2`, the `manual` note, is out before ranking begins). The
+   scalar index on `source` makes this step sub-linear.
+   *Why `source` and not `tags`?* `contains`/`starts_with` are Text-only
+   predicates — on the `tags` **array** they would be `false` for every
+   document (see [filters](/language/filters/)). Filter on a scalar text
+   field, or store tags as a single text field (`"vector search"`), if you
+   need keyword filtering.
 2. **`vector`** adds a similarity source: the 100 nearest embeddings by
    cosine distance among the filtered candidates.
 3. **`text`** adds a BM25 source: the 100 best matches for the query terms.

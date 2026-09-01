@@ -55,18 +55,24 @@ arbitrary. Multiple `.filter(...)` calls on one query intersect like `and`.
 
 ## Evaluation semantics
 
-- **Missing path ⇒ false** for every predicate except `exists()` (and `ne`,
-  which is `true` when the path is missing — see below).
+- **Missing path ⇒ false** for every predicate except `exists()` — including
+  `ne`: "not equal to X" never matches a document that lacks the field
+  (pinned by conformance: *Ne on a MISSING path is FALSE*). Use
+  `exists()` composed with `or` when you want missing values to pass.
 - **Ordered comparisons across non-comparable kinds ⇒ false.** Numbers
   compare numerically across `Int`/`Float` (exact to 2^53); text compares
   lexicographically by UTF-8 bytes; bools, bytes, containers and vectors do
   not participate in `<`/`>`/`<=`/`>=`.
 - **`eq` matches per value kind**, with numeric interop:
   `field("n").eq(Value::Float(2.0))` matches `Int(2)`.
-- **`ne` is the complement of `eq`** evaluated over the same rule — a
-  missing path or a NaN value therefore yields `true` for `ne`.
+- **`ne` is the complement of `eq`** evaluated over a **present** value —
+  it is `true` only for a document that carries the field with a
+  non-matching value (including any value against a NaN filter); the
+  missing-path rule above applies first, so a document without the field
+  still yields `false`.
 - **NaN matches nothing, not even NaN** — a NaN filter value selects the
-  empty set under `eq` and ordered ops, and everything *else* under `ne`.
+  empty set under `eq` and ordered ops, and every *present* value under
+  `ne` (documents missing the field still miss — see above).
   (This is the predicate rule; storage equality — CAS, unique constraints —
   treats NaN as equal to NaN. See
   [equality semantics](/language/equality/).)

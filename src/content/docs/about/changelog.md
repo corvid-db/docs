@@ -1,15 +1,16 @@
 ---
 title: Changelog highlights
-description: Release highlights for corvid and its ecosystem — v0.1.0, v0.1.1, v0.2.0, v0.2.1 — condensed from the engine's CHANGELOG; the engine changelog remains the record of record.
+description: Release highlights for corvid and its ecosystem — v0.1.0, v0.1.1, v0.2.0, v0.2.1 — inlined here, self-contained.
 sidebar:
   order: 1
 ---
 
-Highlights per release, condensed from the
-[engine's CHANGELOG](https://github.com/corvid-db/corvid/blob/master/CHANGELOG.md)
-— which remains the detailed record of every change. Until 1.0, the API and
-on-disk format change without backward-compatibility guarantees; format
-changes migrate via [dump/load](/admin/dump-load/).
+Highlights per release, inlined below so this page stands alone (condensed
+at release time from the engine repository's
+[CHANGELOG](https://github.com/corvid-db/corvid/blob/master/CHANGELOG.md) —
+provenance only; everything you need to evaluate a release is here). Until
+1.0, the API and on-disk format change without backward-compatibility
+guarantees; format changes migrate via [dump/load](/admin/dump-load/).
 
 ## v0.2.1 (2026-08)
 

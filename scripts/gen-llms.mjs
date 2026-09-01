@@ -48,7 +48,7 @@ for (const abs of files) {
   const fm = parseFrontmatter(text);
   const htmlUrl = rel === 'index.md'
     ? `${BASE}/`
-    : `${BASE}/${rel.replace(/\.md$/, '').replace(/index$/, '')}/`;
+    : `${BASE}/${rel.replace(/\.md$/, '').replace(/(^|\/)index$/, '')}/`;
   const mdUrl = `${BASE}/src/${rel}`;
   const out = join(DIST, 'src', rel);
   mkdirSync(dirname(out), { recursive: true });
