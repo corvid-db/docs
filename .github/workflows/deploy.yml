@@ -48,24 +48,25 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git fetch origin gh-pages || true
+          # Publish from an ISOLATED worktree. Checking gh-pages out inside
+          # the build tree (the old approach) let the build's untracked
+          # leftovers mix with — and be overwritten by — gh-pages' tracked
+          # files (junk from earlier runs was committed there), so stale
+          # content could ride the deploy. A separate worktree keeps the
+          # build tree and the publish tree disjoint by construction.
           if git rev-parse --verify origin/gh-pages >/dev/null 2>&1; then
-            git checkout -B gh-pages origin/gh-pages
+            git worktree add -B gh-pages ../gh-pages origin/gh-pages
           else
-            git checkout --orphan gh-pages
-            git rm -rf --quiet . || true
+            git worktree add --orphan -b gh-pages ../gh-pages
           fi
-          # Wipe the previous root build, keep released snapshot dirs and
-          # the build tree itself (dist/ is copied below).
+          cd ../gh-pages
+          # Wipe the previous root build, keep released snapshot dirs.
           find . -mindepth 1 -maxdepth 1 \
             ! -name 'v[0-9]*.[0-9]*.[0-9]*' ! -name '.git' ! -name '.nojekyll' \
-            ! -name 'dist' ! -name 'node_modules' \
             -exec rm -rf {} +
           # Lay down the new root build (no --delete: the explicit find above
           # did the wipe, and the vX.Y.Z dirs must survive rsync).
-          rsync -a dist/ ./
-          # Restore the snapshot dirs (dist build never touches them, but
-          # the find above may have removed them if dist was stale).
-          git checkout origin/gh-pages -- 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || true
+          rsync -a "$GITHUB_WORKSPACE/dist/" ./
           git add -A
           if git diff --cached --quiet; then
             echo "no changes to publish"

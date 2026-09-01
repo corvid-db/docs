@@ -70,15 +70,20 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git fetch origin gh-pages || true
+          # Publish from an ISOLATED worktree. Checking gh-pages out inside
+          # the build tree (the old approach) let the release checkout's
+          # untracked leftovers be swept in by `git add -A` (gh-pages has no
+          # .gitignore), committing build junk to the site root. A separate
+          # worktree keeps the build tree and the publish tree disjoint.
           if git rev-parse --verify origin/gh-pages >/dev/null 2>&1; then
-            git checkout -B gh-pages origin/gh-pages
+            git worktree add -B gh-pages ../gh-pages origin/gh-pages
           else
-            git checkout --orphan gh-pages
-            git rm -rf --quiet . || true
+            git worktree add --orphan -b gh-pages ../gh-pages
           fi
+          cd ../gh-pages
           rm -rf "v${VER}"
           mkdir -p "v${VER}"
-          rsync -a dist/ "v${VER}/"
+          rsync -a "$GITHUB_WORKSPACE/dist/" "v${VER}/"
           git add -A
           if git diff --cached --quiet; then
             echo "no changes to publish"
