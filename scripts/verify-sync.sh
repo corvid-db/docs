@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # The drift gate: regenerate the GENERATED-CLASS pages from the pinned
 # engine tag into a temp dir and verify the committed copies match.
-# Same pattern as the engine's generated-file gates.
+# Same pattern as the engine's generated-file gates. A second gate
+# verifies the binding pages' example blocks match the binding repos'
+# master example tour (scripts/sync-binding-examples.sh --check).
 
 set -euo pipefail
 
@@ -27,8 +29,16 @@ for f in constructs.md error-codes.md; do
   fi
 done
 
+# The binding-example blocks: the four binding pages embed each
+# binding's quickstart + hybrid examples, imported from the binding
+# repos' master (the tour CI executes). Drift means a binding example
+# changed without re-running the splice here.
+if ! bash scripts/sync-binding-examples.sh --check; then
+  status=1
+fi
+
 if [ "$status" -ne 0 ]; then
   echo "" >&2
-  echo "Run: scripts/sync-from-engine.sh && git commit" >&2
+  echo "Run: scripts/sync-from-engine.sh && scripts/sync-binding-examples.sh && git commit" >&2
 fi
 exit "$status"

@@ -11,6 +11,7 @@
     "postbuild": "node scripts/gen-llms.mjs",
     "check-links": "node scripts/check-links.mjs",
     "sync-from-engine": "bash scripts/sync-from-engine.sh",
+    "sync-binding-examples": "bash scripts/sync-binding-examples.sh",
     "verify-sync": "bash scripts/verify-sync.sh"
   },
   "dependencies": {
