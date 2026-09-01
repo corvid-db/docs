@@ -1,6 +1,6 @@
 ---
 title: Changelog highlights
-description: Release highlights for corvid and its ecosystem — v0.1.0, v0.1.1, v0.2.0, v0.2.1 — inlined here, self-contained.
+description: Release highlights for corvid and its ecosystem — v0.1.0, v0.1.1, v0.2.0, v0.2.1, v0.3.0 — inlined here, self-contained.
 sidebar:
   order: 1
 ---
@@ -11,6 +11,26 @@ at release time from the engine repository's
 provenance only; everything you need to evaluate a release is here). Until
 1.0, the API and on-disk format change without backward-compatibility
 guarantees; format changes migrate via [dump/load](/admin/dump-load/).
+
+## v0.3.0 (2026-09)
+
+**The C ABI's first additive expansion** — no engine storage or query
+changes; two new FFI symbols (Appendix A 122 → 124), both inside
+`FFI_VERSION = 1`:
+
+- **`corvid_value_map_keys`** — a map's keys as a string cursor in
+  ascending key-byte order (non-maps answer an empty cursor, inert).
+  Bindings could previously read a map's values only by known key; key
+  enumeration needed a candidate-key oracle.
+- **`corvid_phrase_search`** — the direct positional text search
+  (consecutive in-order analyzed tokens; stop words collapse out of
+  adjacency; most relevant first, ties by key) returning a rows cursor
+  whose score is the hit's BM25 phrase sum. `k == 0` answers an empty
+  cursor. The query builder's `.text` source stays bag-of-words — phrase
+  semantics had no ABI path before this.
+- Golden fixtures gained executable lines (map-key enumeration, phrase
+  cases) — bindings re-vendor `golden/` at their pin bump. No signature,
+  enum value, or behavior change; the soname and `FFI_VERSION` stay at 1.
 
 ## v0.2.1 (2026-08)
 

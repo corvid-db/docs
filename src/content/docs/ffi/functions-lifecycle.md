@@ -1,6 +1,6 @@
 ---
 title: "Functions: lifecycle & values"
-description: The C ABI function reference part 1 — lifecycle and errors (8), collection handles (3), value construction (11) and value reads (12), with signatures, semantics and counterparts.
+description: The C ABI function reference part 1 — lifecycle and errors (8), collection handles (3), value construction (11) and value reads (13, incl. map_keys since 0.3.0), with signatures, semantics and counterparts.
 sidebar:
   order: 4
 ---
@@ -100,7 +100,7 @@ corvid_status corvid_value_map_put(corvid_value *map, const char *key, size_t ke
 - Pushing/putting invalidates previously borrowed children of the container
   (see [ownership](/ffi/ownership/)).
 
-## Value reads (12)
+## Value reads (13)
 
 ```c
 corvid_value_type_t corvid_value_type(const corvid_value *v);   /* discriminant */
@@ -127,6 +127,18 @@ const corvid_value* corvid_value_map_get(const corvid_value *map, const char *ke
 ```
 BORROWED children; NULL when out of range / absent / wrong container (not an
 error). Child lifetime rides the parent — freeing a borrowed child is UB.
+
+```c
+corvid_strs* corvid_value_map_keys(const corvid_value *v);
+```
+The map's keys as an OWNED string cursor (added in 0.3.0), in ascending
+key-BYTE order — the engine's `BTreeMap` iteration order. Drive it with
+`corvid_strs_next` / `corvid_strs_free` (see
+[graph & geo](/ffi/functions-graph-geo/)); each key is UTF-8 handed out as
+a binary-safe (pointer, length) pair borrowed until the cursor's next
+`next` or its free. A non-map `v` yields an EMPTY cursor — inert, not an
+error (the `as_*` wrong-type convention). NULL `v` answers NULL +
+`CORVID_E_ARGUMENT`.
 
 ```c
 size_t        corvid_value_len(const corvid_value *v);   /* items/entries/dims/bytes */

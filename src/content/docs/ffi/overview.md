@@ -1,23 +1,24 @@
 ---
 title: "The C ABI: overview"
-description: The corvid C ABI at a glance — the locked rulings (typed calls, no serialization, OOP bindings), artifact shape, version, and how the 122 symbols are organized.
+description: The corvid C ABI at a glance — the locked rulings (typed calls, no serialization, OOP bindings), artifact shape, version, and how the 124 symbols are organized.
 sidebar:
   order: 0
 ---
 
 The C ABI (`corvid-ffi`) is corvid's cross-language contract: the `corvid`
 cdylib (`libcorvid.so` / `libcorvid.dylib` / `corvid.dll`) plus the
-generated `corvid.h` — **122 symbols** covering the engine surface, at
-`FFI_VERSION = 1` (locked). Every binding repo codes against it.
+generated `corvid.h` — **124 symbols** covering the engine surface, at
+`FFI_VERSION = 1` (locked; 122 before the additive 0.3.0 expansion). Every
+binding repo codes against it.
 
 ```text
 corvid_ffi_version → 1
 
 10 opaque handle types, ~15 POD structs/enums
-122 functions in 13 families:
+124 functions in 13 families:
   lifecycle & errors · collections · value construction · value reads
-  predicates · query builder & rows · aggregations · mutations
-  reads · indexes & schema · graph · geo & iterators · admin
+  predicates · query builder, rows & direct phrase search · aggregations
+  mutations · reads · indexes & schema · graph · geo & iterators · admin
 ```
 
 ## The locked rulings
@@ -55,8 +56,8 @@ corvid_ffi_version → 1
 | Family (count) | Page |
 |---|---|
 | Lifecycle & errors (8), collections (3) | [Lifecycle & collections](/ffi/functions-lifecycle/) |
-| Value construction (11), value reads (12) | [Lifecycle & collections](/ffi/functions-lifecycle/) |
-| Predicates (11), query builder & rows (15) | [Predicates & queries](/ffi/functions-query/) |
+| Value construction (11), value reads (13) | [Lifecycle & collections](/ffi/functions-lifecycle/) |
+| Predicates (11), query builder, rows & phrase search (16) | [Predicates & queries](/ffi/functions-query/) |
 | Aggregations (11), mutations (13) | [Aggregations & mutations](/ffi/functions-data/) |
 | Reads (4), indexes & schema (15) | [Reads & indexes](/ffi/functions-reads/) |
 | Graph (7), geo & iterators (7) | [Graph & geo](/ffi/functions-graph-geo/) |
@@ -72,13 +73,13 @@ Cross-cutting: [types & enums](/ffi/types/), [handles](/ffi/handles/),
 - The generated `corvid.h` is **committed and drift-gated**: a test
   regenerates it from the crate and diffs — spec, header, and radar can
   never disagree silently.
-- A spec-referential radar asserts the header exposes exactly the 122
-  pinned symbols, and a C smoke suite **drives every one** (122/122),
+- A spec-referential radar asserts the header exposes exactly the 124
+  pinned symbols, and a C smoke suite **drives every one** (124/124),
   compiled as a cargo test per OS/compiler (gcc, clang, MSVC via
   `corvid.dll.lib`).
-- Golden fixtures (256 lines across 8 files: NaN/±inf/−0.0, cursors, unique
-  violations, geo boundaries, persistence-across-reopen) pin observable
-  behavior.
+- Golden fixtures (267 lines across 8 files: NaN/±inf/−0.0, cursors,
+  map-key enumeration, phrase search, unique violations, geo boundaries,
+  persistence-across-reopen) pin observable behavior.
 - CI runs a 3-OS release-profile job and an ASan+UBSan+LSan Linux job —
   **zero leaks is the contract** (every handle family's free path executes
   inside the fixtures).
