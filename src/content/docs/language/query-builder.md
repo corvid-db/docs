@@ -18,7 +18,6 @@ let rows = docs.query()
     .text("body", "rust embedded database", 100)
     .fuse_rrf(60.0)
     .rerank_mmr(0.7)
-    .order_by("score", true)
     .offset(0)
     .limit(10)
     .select(["title", "meta.author"])
@@ -67,8 +66,9 @@ filter/shape query.
 
 ## `rerank_mmr(lambda)`
 
-Maximal-marginal-relevance diversification over the fused ranking, using the
-**last vector source's** query as the relevance anchor. `lambda ∈ [0, 1]`
+Maximal-marginal-relevance diversification over the fused ranking, anchored on
+the **first vector source's** query (with several vector sources, the earliest
+`.vector(...)` call supplies the relevance vector). `lambda ∈ [0, 1]`
 (1 = pure relevance order, 0 = maximal diversity; validated at `run()`).
 Requires a vector source — without one it is a no-op. Documents without an
 embedding survive the rerank unchanged.
@@ -84,7 +84,12 @@ large collections but a highly selective filter may return fewer than
 ## `order_by(field, descending)`
 
 Sort by a document field **instead of** rank (rank ordering applies when
-`order_by` is absent). Ordering follows the class rules on
+`order_by` is absent). There is **no special `score` field**:
+`order_by("score", true)` orders by a literal document field named `score` —
+which documents rarely carry, so every row lands in the missing class, sorted
+by key. To get rank order, simply omit `order_by`; the fused RRF score rides
+along on every `ResultRow` if you want to re-sort client-side. Ordering
+follows the class rules on
 [ordering](/language/ordering/): comparable values (numbers numerically —
 numbers before texts across kinds — texts lexically) first; incomparable
 values after; rows missing the field last; ties by key. `descending`

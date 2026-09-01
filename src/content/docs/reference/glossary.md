@@ -32,8 +32,10 @@ stored value equals `expected` (or is absent). Uses semantic value equality.
 post-commit to subscribers; the engine has no separate event log.
 
 **class order (ordering)** — `order_by`'s fixed row classes: comparable
-values (numbers, then texts) → incomparable values → rows missing the field;
-ties by key; `descending` reverses within the comparable class only.
+values (numbers, then texts) → incomparable values (kind tag first, so NaN
+precedes the other incomparable kinds; then key) → rows missing the field;
+ties by key; `descending` reverses the within-class order — kind tag and
+value together — in both present classes, never the class order itself.
 
 **collection** — a named namespace of documents, created lazily on first
 write; `__`-prefixed names are engine-reserved.

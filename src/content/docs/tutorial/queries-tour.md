@@ -86,7 +86,6 @@ let rows = docs.query()
     .text("body", "rust embedded database", 100)               // another source
     .fuse_rrf(60.0)            // reciprocal-rank-fusion constant (optional)
     .rerank_mmr(0.7)           // diversify (optional; needs a vector source)
-    .order_by("score", true)   // or order by a field instead of rank (optional)
     .offset(0)
     .limit(10)
     .select(["title", "meta.author"])  // project returned docs (optional)
@@ -99,6 +98,9 @@ Notes:
 
 - Zero sources → a pure filter/scan query (streamed, bounded memory).
 - One source → ranked by that source. Multiple → fused with RRF.
+- Rank order is what you get above; `order_by(field, desc)` replaces it with
+  a sort on a **literal document field** (there is no special `score` field —
+  to keep rank order, omit `order_by`; the fused score rides on each row).
 - Filtering happens **before** ranking, so the top-k is computed among
   matching documents.
 - `.approx()` lets a *filtered* vector query use the ANN index (over-fetch
