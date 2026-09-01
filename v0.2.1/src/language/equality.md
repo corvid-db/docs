@@ -36,18 +36,27 @@ Two rules coexist by design:
 
 ```rust
 # use corvid::{Db, Value, field};
+# use std::collections::BTreeMap;
 # let db = Db::open_in_memory()?; let c = db.collection("t");
+// field("v") traverses maps, so each doc carries its value under "v"
+let doc = |v: Value| {
+    let mut m = BTreeMap::new();
+    m.insert("v".to_string(), v);
+    Value::Map(m)
+};
+
 // Predicate: NaN selects nothing, ne selects the rest
-c.insert(b"a", &Value::Float(f64::NAN))?;
-c.insert(b"b", &Value::Int(2))?;
-c.insert(b"c", &Value::Float(2.0))?;
+c.insert(b"a", &doc(Value::Float(f64::NAN)))?;
+c.insert(b"b", &doc(Value::Int(2)))?;
+c.insert(b"c", &doc(Value::Float(2.0)))?;
 
 c.query().filter(field("v").eq(Value::Float(f64::NAN))).count()?;  // 0
 c.query().filter(field("v").eq(Value::Int(2))).count()?;           // 2 — numeric interop
 c.query().filter(field("v").ne(Value::Int(2))).count()?;           // 1 (the NaN doc)
 
-// Storage equality: NaN matches NaN in compare_and_set
-let matched = c.compare_and_set(b"a", Some(&Value::Float(f64::NAN)), None)?; // true — deleted
+// Storage equality: NaN matches NaN in compare_and_set, element-wise
+// inside containers too — this deletes doc "a"
+let matched = c.compare_and_set(b"a", Some(&doc(Value::Float(f64::NAN))), None)?; // true
 # let _ = matched;
 # Ok::<(), corvid::Error>(())
 ```

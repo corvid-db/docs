@@ -30,7 +30,7 @@ built with chained method calls:
 
 ```text
 filter → vector source → text source → fuse (RRF) → rerank (MMR)
-       → order_by → offset → select → limit → run
+       → order_by → offset → limit → select → run
 ```
 
 Each source is a retrieval candidate generator; the builder fuses and reranks

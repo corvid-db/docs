@@ -52,7 +52,8 @@ let vec: Option<&[f32]> = doc.as_vector();
 # Ok::<(), corvid::Error>(())
 ```
 
-`as_float` widens an `Int` to `Option<f64>` as well as reading a `Float`.
+`as_float` returns `Some` **only** for a `Float` — unlike comparisons, it does
+not widen an `Int` (use `as_int` and convert yourself when you need that).
 
 ## Dotted paths
 

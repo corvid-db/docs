@@ -1,122 +1,122 @@
-# corvid documentation (current)
+# corvid documentation (0.2.1)
 
 > corvid is an embedded, multi-modal data store for AI applications: vector
 > search, full-text search, metadata filtering, and rank fusion behind one
 > in-process query builder. These docs cover the engine, the C ABI, the
 > bindings, administration, and performance. Every page is also available as
-> clean markdown at the same path under /docs/src/.
+> clean markdown at the same path under /docs/v0.2.1/src/.
 
 ## Overview
 
-- [corvid documentation](/docs/): Canonical documentation for corvid — an embedded, multi-modal data store for AI applications. Vector search, full-text search, filters, rank fusion, graph, geo and TTL behind one in-process query builder.
+- [corvid documentation](/docs/v0.2.1/): Canonical documentation for corvid — an embedded, multi-modal data store for AI applications. Vector search, full-text search, filters, rank fusion, graph, geo and TTL behind one in-process query builder.
 
 ## Start
 
-- [Install](/docs/start/install/): How to install corvid today — a git dependency for Rust, the C ABI artifacts from GitHub releases, and the corvid-node npm package; feature flags and platform support.
-- [What is corvid?](/docs/start/what-is-corvid/): corvid's design in one page — an embedded multi-modal store with a fluent builder API, one transactional core, and no SQL, networking, or serialization on the query path.
+- [Install](/docs/v0.2.1/start/install/): How to install corvid today — a git dependency for Rust, the C ABI artifacts from GitHub releases, and the corvid-node npm package; feature flags and platform support.
+- [What is corvid?](/docs/v0.2.1/start/what-is-corvid/): corvid's design in one page — an embedded multi-modal store with a fluent builder API, one transactional core, and no SQL, networking, or serialization on the query path.
 
 ## Tutorial
 
-- [Your first database](/docs/tutorial/first-database/): Open a corvid database, create collections, write and read documents — the five-minute tour of the embedded engine from Rust.
-- [The hybrid query walkthrough](/docs/tutorial/hybrid-walkthrough/): A complete worked example — building a small retrieval corpus, choosing indexes, and running a filter + vector + BM25 query fused with RRF and reranked with MMR.
-- [A tour of queries](/docs/tutorial/queries-tour/): Filters, vector search, text search, aggregations and pagination in corvid — the read-side tour before composing them into hybrid queries.
+- [Your first database](/docs/v0.2.1/tutorial/first-database/): Open a corvid database, create collections, write and read documents — the five-minute tour of the embedded engine from Rust.
+- [The hybrid query walkthrough](/docs/v0.2.1/tutorial/hybrid-walkthrough/): A complete worked example — building a small retrieval corpus, choosing indexes, and running a filter + vector + BM25 query fused with RRF and reranked with MMR.
+- [A tour of queries](/docs/v0.2.1/tutorial/queries-tour/): Filters, vector search, text search, aggregations and pagination in corvid — the read-side tour before composing them into hybrid queries.
 
 ## The corvid language
 
-- [Aggregations](/docs/language/aggregations/): Aggregations in corvid — count, count_distinct, sum, avg, min, max and grouped variants over the filtered set, with NaN, missing-value and group-key semantics.
-- [Data model](/docs/language/data-model/): The corvid data model — databases, collections, keys, documents, and the derived-index invariant that keeps every index consistent with the documents.
-- [Equality semantics](/docs/language/equality/): Equality in corvid is per-construct — predicates, compare_and_set, unique constraints, joins and group keys each use their own rule; the NaN duality explained.
-- [Filters](/docs/language/filters/): Predicate construction in corvid — field paths, comparison operators, in/between/starts_with/contains, geo predicates, and/or/not composition, and index serviceability.
-- [Joins](/docs/language/joins/): Cross-collection lookup joins in corvid — left-outer by foreign-key field, JoinRow shape, key-kind matching, self-joins and mutation tracking.
-- [Ordering rules](/docs/language/ordering/): order_by class rules in corvid — comparable values first, incomparable after, missing last, ties by key, kind lattice (numbers before texts), and how descending works.
-- [Pagination](/docs/language/pagination/): Keyset cursor pagination in corvid — page and page_where, cursor semantics, snapshot guarantees, and when to prefer cursors over offset.
-- [The query builder](/docs/language/query-builder/): QueryBuilder end to end — filter, vector and text sources, RRF fusion, MMR reranking, approx, order_by, offset, limit, select, run, explain and plan shapes.
-- [Semantic cache](/docs/language/semantic-cache/): The vector-keyed cache — SemanticCache lookups by nearest embedding within a threshold, metric units, and LLM response caching.
-- [Probabilistic sketches](/docs/language/sketches/): corvid's sketch family — HyperLogLog, BloomFilter, CuckooFilter, TDigest, MinHash and LshIndex — deterministic, dependency-free approximate data structures.
-- [Values](/docs/language/values/): The Value type — null, bool, int, float, text, bytes, array, map and first-class vectors; dotted-path access and typed accessors.
-- [Writes](/docs/language/writes/): Every write path in corvid — insert, batch, auto keys, patch, update, compare_and_set, delete_where — with their exact semantics, index maintenance and rollback behavior.
+- [Aggregations](/docs/v0.2.1/language/aggregations/): Aggregations in corvid — count, count_distinct, sum, avg, min, max and grouped variants over the filtered set, with NaN, missing-value and group-key semantics.
+- [Data model](/docs/v0.2.1/language/data-model/): The corvid data model — databases, collections, keys, documents, and the derived-index invariant that keeps every index consistent with the documents.
+- [Equality semantics](/docs/v0.2.1/language/equality/): Equality in corvid is per-construct — predicates, compare_and_set, unique constraints, joins and group keys each use their own rule; the NaN duality explained.
+- [Filters](/docs/v0.2.1/language/filters/): Predicate construction in corvid — field paths, comparison operators, in/between/starts_with/contains, geo predicates, and/or/not composition, and index serviceability.
+- [Joins](/docs/v0.2.1/language/joins/): Cross-collection lookup joins in corvid — left-outer by foreign-key field, JoinRow shape, key-kind matching, self-joins and mutation tracking.
+- [Ordering rules](/docs/v0.2.1/language/ordering/): order_by class rules in corvid — comparable values first, incomparable after, missing last, ties by key, kind lattice (numbers before texts), and how descending works.
+- [Pagination](/docs/v0.2.1/language/pagination/): Keyset cursor pagination in corvid — page and page_where, cursor semantics, snapshot guarantees, and when to prefer cursors over offset.
+- [The query builder](/docs/v0.2.1/language/query-builder/): QueryBuilder end to end — filter, vector and text sources, RRF fusion, MMR reranking, approx, order_by, offset, limit, select, run, explain and plan shapes.
+- [Semantic cache](/docs/v0.2.1/language/semantic-cache/): The vector-keyed cache — SemanticCache lookups by nearest embedding within a threshold, metric units, and LLM response caching.
+- [Probabilistic sketches](/docs/v0.2.1/language/sketches/): corvid's sketch family — HyperLogLog, BloomFilter, CuckooFilter, TDigest, MinHash and LshIndex — deterministic, dependency-free approximate data structures.
+- [Values](/docs/v0.2.1/language/values/): The Value type — null, bool, int, float, text, bytes, array, map and first-class vectors; dotted-path access and typed accessors.
+- [Writes](/docs/v0.2.1/language/writes/): Every write path in corvid — insert, batch, auto keys, patch, update, compare_and_set, delete_where — with their exact semantics, index maintenance and rollback behavior.
 
 ## Indexes
 
-- [Geo indexes](/docs/indexes/geo/): create_geo_index — fixed-resolution grid cells making radius, bbox, within_km and geo_nearest queries sub-linear, with exact haversine verification.
-- [Index maintenance](/docs/indexes/maintenance/): Index creation, crash-safe backfill with resume, re-creation semantics, automatic compaction, and corruption posture for corvid indexes.
-- [On-disk vs in-memory indexes](/docs/indexes/on-disk/): corvid's on-disk index family — bounded memory, persistence without rebuild, when to switch from in-RAM indexes, and the scaling walls each removes.
-- [Indexes: choosing](/docs/indexes/overview/): The corvid index families at a glance — scalar, compound, text, geo, vector — what each accelerates, storage characteristics, and the decision table for when to create which.
-- [Vector quantization](/docs/indexes/quantization/): Binary, Scalar and Product Quantization for corvid vector indexes — compression ratios, time premiums, recall margins and the guidance for choosing a mode.
-- [Scalar and compound indexes](/docs/indexes/scalar/): create_scalar_index and create_compound_index — order-preserving keys for sub-linear equality/range filters and counts, prefix-equality plus trailing-range compound windows, and the all_docs_indexed rule.
-- [Text indexes](/docs/indexes/text/): create_text_index and create_text_index_ondisk — BM25 inverted indexes for text_search, phrase_search and builder text sources; in-RAM vs on-disk trade-offs.
-- [Vector indexes](/docs/indexes/vector/): HNSW vector indexes in corvid — the five constructor variants, metrics, exact vs approximate behavior, Hit.approximate, dimension handling and automatic use.
+- [Geo indexes](/docs/v0.2.1/indexes/geo/): create_geo_index — fixed-resolution grid cells making radius, bbox, within_km and geo_nearest queries sub-linear, with exact haversine verification.
+- [Index maintenance](/docs/v0.2.1/indexes/maintenance/): Index creation, crash-safe backfill with resume, re-creation semantics, automatic compaction, and corruption posture for corvid indexes.
+- [On-disk vs in-memory indexes](/docs/v0.2.1/indexes/on-disk/): corvid's on-disk index family — bounded memory, persistence without rebuild, when to switch from in-RAM indexes, and the scaling walls each removes.
+- [Indexes: choosing](/docs/v0.2.1/indexes/overview/): The corvid index families at a glance — scalar, compound, text, geo, vector — what each accelerates, storage characteristics, and the decision table for when to create which.
+- [Vector quantization](/docs/v0.2.1/indexes/quantization/): Binary, Scalar and Product Quantization for corvid vector indexes — compression ratios, time premiums, recall margins and the guidance for choosing a mode.
+- [Scalar and compound indexes](/docs/v0.2.1/indexes/scalar/): create_scalar_index and create_compound_index — order-preserving keys for sub-linear equality/range filters and counts, prefix-equality plus trailing-range compound windows, and the all_docs_indexed rule.
+- [Text indexes](/docs/v0.2.1/indexes/text/): create_text_index and create_text_index_ondisk — BM25 inverted indexes for text_search, phrase_search and builder text sources; in-RAM vs on-disk trade-offs.
+- [Vector indexes](/docs/v0.2.1/indexes/vector/): HNSW vector indexes in corvid — the six constructor variants, metrics, exact vs approximate behavior, Hit.approximate, dimension handling, automatic use, and the direct Hnsw/Pq APIs.
 
 ## Full-text search
 
-- [Full-text search](/docs/fts/overview/): BM25 full-text search in corvid — text_search and the query builder text source, scoring over the filtered corpus, and the exact baseline.
-- [Phrase search](/docs/fts/phrase-search/): phrase_search in corvid — exact in-order token matching, positional indexing, repeated terms, sentence boundaries, and the stop-word collapse caveat.
-- [Tokenization](/docs/fts/tokenization/): The corvid analyzer — case folding, English stop words, the Harman S-stemmer, and CJK sliding-bigram segmentation with its exact code-point boundaries.
+- [Full-text search](/docs/v0.2.1/fts/overview/): BM25 full-text search in corvid — text_search and the query builder text source, scoring over the filtered corpus, and the exact baseline.
+- [Phrase search](/docs/v0.2.1/fts/phrase-search/): phrase_search in corvid — exact in-order token matching, positional indexing, repeated terms, sentence boundaries, and the stop-word collapse caveat.
+- [Tokenization](/docs/v0.2.1/fts/tokenization/): The corvid analyzer — case folding, English stop words, the Harman S-stemmer, and CJK sliding-bigram segmentation with its exact code-point boundaries.
 
 ## Graph
 
-- [Graph](/docs/graph/overview/): corvid's directed property graph — link, link_weighted, unlink, neighbors, in_neighbors, traverse; atomic edges, cascade semantics, adjacency, and relation isolation.
+- [Graph](/docs/v0.2.1/graph/overview/): corvid's directed property graph — link, link_weighted, unlink, neighbors, in_neighbors, traverse; atomic edges, cascade semantics, adjacency, and relation isolation.
 
 ## Geo
 
-- [Geo queries](/docs/geo/overview/): Geospatial queries in corvid — geo_within_radius, geo_within_bbox (including antimeridian wrap), geo_nearest, point formats, haversine distances and validation rules.
+- [Geo queries](/docs/v0.2.1/geo/overview/): Geospatial queries in corvid — geo_within_radius, geo_within_bbox (including antimeridian wrap), geo_nearest, point formats, haversine distances and validation rules.
 
 ## Integrity & events
 
-- [Change events](/docs/integrity/events/): Reactive change feeds in corvid — subscribe/unsubscribe, ChangeEvent shape, exact per-path insert/delete vectors, synchronous post-commit dispatch, and the silent paths.
-- [Schemas and constraints](/docs/integrity/schema/): Optional declared schemas in corvid — FieldType, required and unique constraints, write-time enforcement, NaN and container rules under unique, and the MCP schema tools.
-- [Transactions](/docs/integrity/transactions/): corvid's transaction model — single writer with MVCC readers, the Store byte-level API, transaction/WriteBatch/ReadBatch, bulk scopes and relaxed durability.
-- [TTL and expiry](/docs/integrity/ttl/): Per-record expiry in corvid — insert_with_ttl, set_ttl, ttl, purge_expired; the injected clock, visibility until purge, and index/edge cascades on purge.
+- [Change events](/docs/v0.2.1/integrity/events/): Reactive change feeds in corvid — subscribe/unsubscribe, ChangeEvent shape, exact per-path insert/delete vectors, synchronous post-commit dispatch, and the silent paths.
+- [Schemas and constraints](/docs/v0.2.1/integrity/schema/): Optional declared schemas in corvid — FieldType, required and unique constraints, write-time enforcement, NaN and container rules under unique, and the MCP schema tools.
+- [Transactions](/docs/v0.2.1/integrity/transactions/): corvid's transaction model — single writer with MVCC readers, the Store byte-level API, transaction/WriteBatch/ReadBatch, bulk scopes and relaxed durability.
+- [TTL and expiry](/docs/v0.2.1/integrity/ttl/): Per-record expiry in corvid — insert_with_ttl, set_ttl, ttl, purge_expired; the injected clock, visibility until purge, and index/edge cascades on purge.
 
 ## Administration
 
-- [Backup](/docs/admin/backup/): Online consistent backup in corvid — Db::backup and Store::backup, the fresh-target rule, physical format caveats, and failure cleanup.
-- [Bulk loading](/docs/admin/bulk/): Fast bulk ingestion in corvid — Db::bulk relaxed-durability scopes, insert_batch single-transaction writes, and the crash window semantics.
-- [Compaction](/docs/admin/compact/): Db::compact in corvid — offline space reclamation after heavy deletes, exclusivity requirements, and the automatic on-disk vector index compaction.
-- [Dump and load](/docs/admin/dump-load/): Logical migration in corvid — Db::dump and Db::load (format v2, u64 prefixes), load_with_renames for legacy __-containing names, and the one-way compat matrix.
-- [Feature flags](/docs/admin/features/): corvid's optional cargo features — zstd document compression and tracing instrumentation, both OFF by default, with ratios, overheads and portability caveats.
-- [The MCP sidecar](/docs/admin/mcp/): corvid-mcp — expose a corvid store to agentic tools over MCP on stdio; the 29 tools, schema tools, search parameters, and wire details.
-- [Observability](/docs/admin/observability/): Observing corvid — the tracing feature's event inventory (plan shapes, backfill, compaction, semantic cache), explain/plan_shape introspection, and counters via subscribers.
-- [Opening and closing](/docs/admin/open-close/): Db lifecycle in corvid — open, open_in_memory, the exclusive file lock, collection listing, and what persists across reopen.
+- [Backup](/docs/v0.2.1/admin/backup/): Online consistent backup in corvid — Db::backup and Store::backup, the fresh-target rule, physical format caveats, and failure cleanup.
+- [Bulk loading](/docs/v0.2.1/admin/bulk/): Fast bulk ingestion in corvid — Db::bulk relaxed-durability scopes, insert_batch single-transaction writes, and the crash window semantics.
+- [Compaction](/docs/v0.2.1/admin/compact/): Db::compact in corvid — offline space reclamation after heavy deletes, exclusivity requirements, and the automatic on-disk vector index compaction.
+- [Dump and load](/docs/v0.2.1/admin/dump-load/): Logical migration in corvid — Db::dump and Db::load (format v2, u64 prefixes), load_with_renames for legacy __-containing names, and the one-way compat matrix.
+- [Feature flags](/docs/v0.2.1/admin/features/): corvid's optional cargo features — zstd document compression and tracing instrumentation, both OFF by default, with ratios, overheads and portability caveats.
+- [The MCP sidecar](/docs/v0.2.1/admin/mcp/): corvid-mcp — expose a corvid store to agentic tools over MCP on stdio; the 29 tools, schema tools, search parameters, and wire details.
+- [Observability](/docs/v0.2.1/admin/observability/): Observing corvid — the tracing feature's event inventory (plan shapes, backfill, compaction, semantic cache), explain/plan_shape introspection, and counters via subscribers.
+- [Opening and closing](/docs/v0.2.1/admin/open-close/): Db lifecycle in corvid — open, open_in_memory, the exclusive file lock, collection listing, and what persists across reopen.
 
 ## Performance
 
-- [FFI crossing cost](/docs/performance/ffi-crossing/): The measured cost of crossing the C ABI — put/get/scan/hybrid-query through the ABI run 0.99-1.02x their native Rust twins; method and reading.
-- [The numbers](/docs/performance/numbers/): corvid's measured baseline — the full criterion suite (encode/decode, HNSW build/search, PQ, BM25 exact vs indexed, distance kernels, edge churn, delete-heavy, windows, order walks) with deltas and provenance.
-- [Performance: reading these numbers](/docs/performance/overview/): How to read corvid's benchmark record — the machine, method, provenance rules, the no-regression guard, and single-machine caveats.
-- [Quantization guidance](/docs/performance/quantization-guidance/): The measured quantization decision — binary's 50.8x scan win, PQ's storage/time premiums, the SIMD closure verdict, and zstd's vector-blindness.
-- [Scaling characteristics](/docs/performance/scaling/): How corvid scales — measured operation times at 1k/100k/1M, what holds constant or bounded to 50M, and the walls the on-disk and scalar index families remove.
+- [FFI crossing cost](/docs/v0.2.1/performance/ffi-crossing/): The measured cost of crossing the C ABI — put/get/scan/hybrid-query through the ABI run 0.99-1.02x their native Rust twins; method and reading.
+- [The numbers](/docs/v0.2.1/performance/numbers/): corvid's measured baseline — the full criterion suite (encode/decode, HNSW build/search, PQ, BM25 exact vs indexed, distance kernels, edge churn, delete-heavy, windows, order walks) with deltas and provenance.
+- [Performance: reading these numbers](/docs/v0.2.1/performance/overview/): How to read corvid's benchmark record — the machine, method, provenance rules, the no-regression guard, and single-machine caveats.
+- [Quantization guidance](/docs/v0.2.1/performance/quantization-guidance/): The measured quantization decision — binary's 50.8x scan win, PQ's storage/time premiums, the SIMD closure verdict, and zstd's vector-blindness.
+- [Scaling characteristics](/docs/v0.2.1/performance/scaling/): How corvid scales — measured operation times at 1k/100k/1M, what holds constant or bounded to 50M, and the walls the on-disk and scalar index families remove.
 
 ## The C ABI
 
-- [Errors and NULL discipline](/docs/ffi/errors/): The C ABI error model — status returns, thread-local last error, absence-is-success out-params, message lifetime, and the never-UB NULL rules.
-- [Functions: admin](/docs/ffi/functions-admin/): The C ABI function reference part 6 — dump to path, load from path, load with renames, backup, and compact with its exclusivity gate and the FFI-only CORVID_E_BUSY.
-- [Functions: aggregations & mutations](/docs/ffi/functions-data/): The C ABI function reference part 3 — the eleven aggregation functions consuming the query, and the thirteen mutation functions (insert, put_many, insert_auto, update, patch, CAS, deletes, TTL).
-- [Functions: graph & geo](/docs/ffi/functions-graph-geo/): The C ABI function reference part 5 — the graph family (link, link_weighted, unlink, neighbors, in_neighbors, neighbors_weighted, traverse) and the geo & shared iterator family.
-- [Functions: lifecycle & values](/docs/ffi/functions-lifecycle/): The C ABI function reference part 1 — lifecycle and errors (8), collection handles (3), value construction (11) and value reads (12), with signatures, semantics and counterparts.
-- [Functions: predicates & queries](/docs/ffi/functions-query/): The C ABI function reference part 2 — the eleven predicate constructors and combinators (11), and the query builder with rows cursors (15).
-- [Functions: reads & indexes](/docs/ffi/functions-reads/): The C ABI function reference part 4 — reads (get, scan, page, len) and the indexes & schema family (scalar, compound, text, geo, six vector variants, set_schema, schema iterator).
-- [Handles](/docs/ffi/handles/): The C ABI's ten handle types — backing, thread contract, creation and destruction, lifetimes, and the cross-family-free rule.
-- [The C ABI: overview](/docs/ffi/overview/): The corvid C ABI at a glance — the locked rulings (typed calls, no serialization, OOP bindings), artifact shape, version, and how the 122 symbols are organized.
-- [Ownership & transfer](/docs/ffi/ownership/): The C ABI's ownership rules — the seven transfer rules, the per-family transfer table (cloned/consumed/borrowed inputs, owned/borrowed outputs), and the UB prohibitions.
-- [Stability & v1 exclusions](/docs/ffi/stability/): The C ABI's naming conventions, frozen enums, pre-1.0 break policy, post-1.0 soname discipline, and the deliberate v1 exclusions with their reopen triggers.
-- [Threading](/docs/ffi/threading/): The C ABI thread-safety contract — thread-safe db/collection handles, single-threaded builders and cursors, thread-local last error, and the compact quiescence rule.
-- [Types and enums](/docs/ffi/types/): The C ABI's POD types — corvid_kv, corvid_field_def, corvid_geohit, the frozen enums (status, err, cmp, metric, quant, value types, field types) and the corvid_value_type_t naming.
+- [Errors and NULL discipline](/docs/v0.2.1/ffi/errors/): The C ABI error model — status returns, thread-local last error, absence-is-success out-params, message lifetime, and the never-UB NULL rules.
+- [Functions: admin](/docs/v0.2.1/ffi/functions-admin/): The C ABI function reference part 6 — dump to path, load from path, load with renames, backup, and compact with its exclusivity gate and the FFI-only CORVID_E_BUSY.
+- [Functions: aggregations & mutations](/docs/v0.2.1/ffi/functions-data/): The C ABI function reference part 3 — the eleven aggregation functions consuming the query, and the thirteen mutation functions (insert, put_many, insert_auto, update, patch, CAS, deletes, TTL).
+- [Functions: graph & geo](/docs/v0.2.1/ffi/functions-graph-geo/): The C ABI function reference part 5 — the graph family (link, link_weighted, unlink, neighbors, in_neighbors, neighbors_weighted, traverse) and the geo & shared iterator family.
+- [Functions: lifecycle & values](/docs/v0.2.1/ffi/functions-lifecycle/): The C ABI function reference part 1 — lifecycle and errors (8), collection handles (3), value construction (11) and value reads (12), with signatures, semantics and counterparts.
+- [Functions: predicates & queries](/docs/v0.2.1/ffi/functions-query/): The C ABI function reference part 2 — the eleven predicate constructors and combinators (11), and the query builder with rows cursors (15).
+- [Functions: reads & indexes](/docs/v0.2.1/ffi/functions-reads/): The C ABI function reference part 4 — reads (get, scan, page, len) and the indexes & schema family (scalar, compound, text, geo, six vector variants, set_schema, schema iterator).
+- [Handles](/docs/v0.2.1/ffi/handles/): The C ABI's ten handle types — backing, thread contract, creation and destruction, lifetimes, and the cross-family-free rule.
+- [The C ABI: overview](/docs/v0.2.1/ffi/overview/): The corvid C ABI at a glance — the locked rulings (typed calls, no serialization, OOP bindings), artifact shape, version, and how the 122 symbols are organized.
+- [Ownership & transfer](/docs/v0.2.1/ffi/ownership/): The C ABI's ownership rules — the seven transfer rules, the per-family transfer table (cloned/consumed/borrowed inputs, owned/borrowed outputs), and the UB prohibitions.
+- [Stability & v1 exclusions](/docs/v0.2.1/ffi/stability/): The C ABI's naming conventions, frozen enums, pre-1.0 break policy, post-1.0 soname discipline, and the deliberate v1 exclusions with their reopen triggers.
+- [Threading](/docs/v0.2.1/ffi/threading/): The C ABI thread-safety contract — thread-safe db/collection handles, single-threaded builders and cursors, thread-local last error, and the compact quiescence rule.
+- [Types and enums](/docs/v0.2.1/ffi/types/): The C ABI's POD types — corvid_kv, corvid_field_def, corvid_geohit, the frozen enums (status, err, cmp, metric, quant, value types, field types) and the corvid_value_type_t naming.
 
 ## Bindings
 
-- [corvid-c](/docs/bindings/corvid-c/): The corvid-c reference C consumer — fetch and verify release artifacts, link, run the golden suite; quick start, installing, and the v0.2.0 macOS artifact story.
-- [corvid-node](/docs/bindings/corvid-node/): The corvid-node Node.js binding — npm install, OOP usage with Db/Collection/Query/field, the JS value mapping, error handling and the golden-suite correctness story.
-- [Bindings ecosystem](/docs/bindings/overview/): Language bindings for corvid — shipped (corvid-c reference consumer, corvid-node) and the planned ecosystem index (go, js/wasm, jvm, dart, php, python, cpp, zig, rust on crates.io), each with its planned scope.
+- [corvid-c](/docs/v0.2.1/bindings/corvid-c/): The corvid-c reference C consumer — fetch and verify release artifacts, link, run the golden suite; quick start, installing, and the v0.2.0 macOS artifact story.
+- [corvid-node](/docs/v0.2.1/bindings/corvid-node/): The corvid-node Node.js binding — npm install, OOP usage with Db/Collection/Query/field, the JS value mapping, error handling and the golden-suite correctness story.
+- [Bindings ecosystem](/docs/v0.2.1/bindings/overview/): Language bindings for corvid — shipped (corvid-c reference consumer, corvid-node) and the planned ecosystem index (go, js/wasm, jvm, dart, php, python, cpp, zig, rust on crates.io), each with its planned scope.
 
 ## Reference
 
-- [Construct reference](/docs/reference/constructs/): Every public construct of corvid and corvid-mcp — 327 engine constructs across 13 statement classes plus 51 wire constructs — each with its covering conformance tests, generated from the engine's surface manifests.
-- [Error codes](/docs/reference/error-codes/): The frozen corvid error-code table — engine corvid::Error variants 1-18 mapped 1:1 onto C ABI codes, plus the FFI-only CORVID_E_BUSY (19); generated from the engine's FFI spec.
-- [Glossary](/docs/reference/glossary/): Definitions of corvid's terms — adjacency, ANN, backfill, candidate superset, CAS, class order, derived index, golden fixtures, keyset pagination, MVCC, PQ, RRF, MMR, tombstone and more.
+- [Construct reference](/docs/v0.2.1/reference/constructs/): Every public construct of corvid and corvid-mcp — 327 engine constructs across 13 statement classes plus 51 wire constructs — each with its covering conformance tests, generated from the engine's surface manifests.
+- [Error codes](/docs/v0.2.1/reference/error-codes/): The frozen corvid error-code table — engine corvid::Error variants 1-18 mapped 1:1 onto C ABI codes, plus the FFI-only CORVID_E_BUSY (19); generated from the engine's FFI spec.
+- [Glossary](/docs/v0.2.1/reference/glossary/): Definitions of corvid's terms — adjacency, ANN, backfill, candidate superset, CAS, class order, derived index, golden fixtures, keyset pagination, MVCC, PQ, RRF, MMR, tombstone and more.
 
 ## About
 
-- [Changelog highlights](/docs/about/changelog/): Release highlights for corvid and its ecosystem — v0.1.0, v0.1.1, v0.2.0, v0.2.1 — condensed from the engine's CHANGELOG; the engine changelog remains the record of record.
-- [About these docs](/docs/about//): How corvid's documentation works — the current/snapshot versioning mechanism, the generated-class pages synced from the engine, AI-friendly endpoints (llms.txt, markdown sources), and how to contribute.
+- [Changelog highlights](/docs/v0.2.1/about/changelog/): Release highlights for corvid and its ecosystem — v0.1.0, v0.1.1, v0.2.0, v0.2.1 — inlined here, self-contained.
+- [About these docs](/docs/v0.2.1/about/): How corvid's documentation works — the current/snapshot versioning mechanism, the generated-class pages synced from the engine, AI-friendly endpoints (llms.txt, markdown sources), and how to contribute.
 
