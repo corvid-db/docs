@@ -8,7 +8,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 TAG="$(cat .engine-pin | tr -d '[:space:]')"
-TMP="$(mktemp -d)"
+# Temp stays inside the repo (git-ignored .tmp-sync/) — see the note in
+# sync-from-engine.sh; system-TMPDIR paths must never be reachable by git.
+mkdir -p .tmp-sync
+TMP=".tmp-sync/$(basename "$(mktemp -d "${PWD}/.tmp-sync/verify.XXXXXX")")"
 trap 'rm -rf "$TMP"' EXIT
 
 bash scripts/sync-from-engine.sh "$TAG" "$TMP"

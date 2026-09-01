@@ -16,7 +16,12 @@ cd "$(dirname "$0")/.."
 TAG="${1:-$(cat .engine-pin | tr -d '[:space:]')}"
 OUT_DIR="${2:-src/content/docs/reference}"
 ENGINE_RAW="https://raw.githubusercontent.com/corvid-db/corvid/${TAG}"
-TMP="$(mktemp -d)"
+# Temp stays INSIDE the repo under the git-ignored .tmp-sync/ — a system
+# $TMPDIR (macOS: /var/folders/...) escapes the repo root, and one early
+# run's output there was swept in by `git add -A` (purged from history;
+# never again).
+mkdir -p .tmp-sync
+TMP=".tmp-sync/$(basename "$(mktemp -d "${PWD}/.tmp-sync/tmp.XXXXXX")")"
 trap 'rm -rf "$TMP"' EXIT
 
 echo "syncing generated pages from engine tag ${TAG} ..."

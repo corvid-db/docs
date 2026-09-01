@@ -19,3 +19,6 @@ yarn-error.log*
 
 # temp sync output
 .tmp-sync/
+
+# absolute-path escape guard (macOS TMPDIR is /var/folders/...)
+/var/
