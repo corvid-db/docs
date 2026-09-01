@@ -27,22 +27,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Enables GitHub Pages (if not yet) with the gh-pages branch / root
-      # as source. Idempotent.
-      - name: "Configure Pages (source: gh-pages branch)"
-        id: pages
-        uses: actions/configure-pages@v5
-        with:
-          enablement: true
-      - name: Set Pages source to gh-pages branch
-        run: |
-          gh api repos/${GITHUB_REPOSITORY}/pages -X PUT \
-            -f 'source[branch]=gh-pages' -f 'source[path]=/' || \
-          gh api repos/${GITHUB_REPOSITORY}/pages -X POST \
-            -f 'source[branch]=gh-pages' -f 'source[path]=/'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -91,3 +75,16 @@ jobs:
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Keep the Pages source pinned to gh-pages/(root). Creating the site
+      # the first time needs an admin token (done once by a maintainer:
+      #   gh api repos/corvid-db/docs/pages -X POST \
+      #     -f 'source[branch]=gh-pages' -f 'source[path]=/'
+      # ); afterwards GITHUB_TOKEN can keep it pointed correctly.
+      - name: Ensure Pages serves gh-pages/(root)
+        run: |
+          gh api repos/${GITHUB_REPOSITORY}/pages -X PUT \
+            -f 'source[branch]=gh-pages' -f 'source[path]=/' || \
+            echo "Pages site not configurable with GITHUB_TOKEN (first run: create it once as admin)"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
