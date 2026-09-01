@@ -5412,9 +5412,10 @@ int main(void) {
     corvid_query *q = corvid_query_new(docs);
     if (!q) { fprintf(stderr, "hybrid: query_new failed\n"); return 1; }
 
+    corvid_value *doc_kind = corvid_value_text("doc", 3);
     corvid_pred *only_docs =
-        corvid_pred_compare("kind", 4, CORVID_CMP_EQ,
-                             corvid_value_text("doc", 3));
+        corvid_pred_compare("kind", 4, CORVID_CMP_EQ, doc_kind);
+    corvid_value_free(doc_kind); /* CLONED into the tree (§5 rule 3) */
     if (!only_docs) { fprintf(stderr, "hybrid: pred_compare failed\n"); return 1; }
     must("query_filter", corvid_query_filter(q, only_docs)); /* consumes pred */
 
