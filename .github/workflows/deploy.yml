@@ -70,9 +70,11 @@ jobs:
             git checkout --orphan gh-pages
             git rm -rf --quiet . || true
           fi
-          # Wipe the previous root build, keep released snapshot dirs.
+          # Wipe the previous root build, keep released snapshot dirs and
+          # the build tree itself (dist/ is copied below).
           find . -mindepth 1 -maxdepth 1 \
             ! -name 'v[0-9]*.[0-9]*.[0-9]*' ! -name '.git' ! -name '.nojekyll' \
+            ! -name 'dist' ! -name 'node_modules' \
             -exec rm -rf {} +
           # Lay down the new root build (no --delete: the explicit find above
           # did the wipe, and the vX.Y.Z dirs must survive rsync).
