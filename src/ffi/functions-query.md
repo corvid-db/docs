@@ -1,6 +1,6 @@
 ---
 title: "Functions: predicates & queries"
-description: The C ABI function reference part 2 — the eleven predicate constructors and combinators (11), and the query builder with rows cursors (15).
+description: The C ABI function reference part 2 — the eleven predicate constructors and combinators (11), the query builder with rows cursors (15), and the direct phrase search (16th of the family since 0.3.0).
 sidebar:
   order: 5
 ---
@@ -59,7 +59,7 @@ combine, the children belong to the tree. `corvid_pred_free` frees a
 `corvid_query_filter`, or `corvid_delete_where` are consumed and must not be
 freed (double free = UB).
 
-## Query builder & rows (15)
+## Query builder, rows & direct phrase search (16)
 
 A query is built on a `corvid_query*` (single-threaded) and executed by
 `corvid_query_run` or any aggregate, **either of which consumes it**
@@ -127,7 +127,27 @@ Advance: 1 and fill out-params, 0 at exhaustion (never errors — the result
 is materialized). The key and document are **BORROWED from the cursor:
 valid only until the next `corvid_rows_next` or `corvid_rows_free`** —
 using or freeing them after is UB; `corvid_value_clone` copies what you keep.
-`score` is the fused RRF score (`0.0` for pure filter/order queries and
-`corvid_page` rows).
+`score` is the producing call's ranking: the fused RRF score for
+`corvid_query_run` (`0.0` for pure filter/order queries), the BM25 phrase
+score for `corvid_phrase_search`, `0.0` for `corvid_page` rows.
+
+```c
+corvid_rows* corvid_phrase_search(corvid_coll *c, const char *field, size_t field_len,
+                                  const char *phrase, size_t phrase_len, size_t k);
+```
+DIRECT positional text search — no query handle, one call over the
+collection (added in 0.3.0; wraps `Collection::phrase_search`). Documents
+whose `field` TEXT contains `phrase` as a consecutive, IN-ORDER run of
+analyzed tokens, most relevant first, ties by key, up to `k` rows. The
+engine's analysis applies to the phrase too, and stop words collapse out of
+adjacency on both sides — `"embedded the database"` matches text containing
+`"embedded database"`. Documents lacking the field or holding a non-text
+value there are not part of the corpus. `k == 0` yields an empty cursor
+(inert — the `geo_nearest`/`page` convention, not an error); larger `k`
+just caps. Returns an OWNED rows cursor whose `score` is the hit's BM25
+relevance (the sum over the phrase's analyzed terms — `TextHit::score`,
+not the builder's fused RRF scale). One MVCC snapshot covers the search.
+NULL `c`/`field`/`phrase`, or invalid UTF-8 in either string, answers
+NULL + `CORVID_E_ARGUMENT`.
 
 Next: [aggregations & mutations](/ffi/functions-data/).

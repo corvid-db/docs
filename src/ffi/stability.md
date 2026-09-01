@@ -47,7 +47,7 @@ sidebar:
 | Exclusion | Why | Reopen trigger |
 |---|---|---|
 | Events / subscriptions | reentrancy across languages | demonstrated v2 need (a binding shipping a portable event loop story) |
-| Direct `vector_search` / `text_search` / `phrase_search` fns | the query builder covers them (`.vector`/`.text` sources) | a workload proving per-call builder overhead matters — **stays closed on the measured parity** (see [FFI crossing cost](/performance/ffi-crossing/)) |
+| Direct `vector_search` / `text_search` fns | the query builder covers them (`.vector`/`.text` sources). (`phrase_search` gained a direct fn in 0.3.0 — positional semantics do not compose out of the bag-of-words `.text` source; see [predicates & queries](/ffi/functions-query/)) | a workload proving per-call builder overhead matters — **stays closed on the measured parity** (see [FFI crossing cost](/performance/ffi-crossing/)) |
 | Sketches (Bloom, Cuckoo, HLL, LshIndex, MinHash, TDigest) | not core to the typed-document story | binding-user demand |
 | Semantic cache | young API | engine-side stabilization |
 | `PlanCache` / `explain` / `plan_shape` | advisory/diagnostic, no runtime contract | a binding asks for query introspection |

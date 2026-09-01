@@ -15,8 +15,8 @@ rules them all:
 | `corvid_value*` | `corvid::Value` | builder handles **single-threaded**; borrowed children ride the parent's lifetime | any `corvid_value_*` constructor, `corvid_get`, `corvid_query_min/max`, `corvid_value_clone` | `corvid_value_free` (owned values only) |
 | `corvid_pred*` | `Predicate` tree | **single-threaded** construction | the 10 `corvid_pred_*` constructors | `corvid_pred_free` (never-consumed roots only); consumed by and/or/not/filter/delete_where |
 | `corvid_query*` | owned QueryBuilder state | **single-threaded** build | `corvid_query_new` | `corvid_query_run` and every aggregate (CONSUME); `corvid_query_free` for abandoned builders |
-| `corvid_rows*` | materialized `Vec<ResultRow>` + cursor | read-only cursor; **single-threaded** use | `corvid_query_run`, `corvid_page` | `corvid_rows_free` |
-| `corvid_strs*` | owned byte-string vector + cursor | read-only cursor; **single-threaded** | `corvid_collections`, `corvid_neighbors`, `corvid_in_neighbors`, `corvid_traverse` | `corvid_strs_free` |
+| `corvid_rows*` | materialized `Vec<ResultRow>` + cursor | read-only cursor; **single-threaded** use | `corvid_query_run`, `corvid_page`, `corvid_phrase_search` | `corvid_rows_free` |
+| `corvid_strs*` | owned byte-string vector + cursor | read-only cursor; **single-threaded** | `corvid_collections`, `corvid_neighbors`, `corvid_in_neighbors`, `corvid_traverse`, `corvid_value_map_keys` | `corvid_strs_free` |
 | `corvid_geohits*` | owned hit vector + cursor | read-only cursor; **single-threaded** | the 3 `corvid_geo_*` fns, `corvid_neighbors_weighted` | `corvid_geohits_free` |
 | `corvid_groupiter*` | owned group list (sorted by group key) + cursor | read-only cursor; **single-threaded** | `corvid_query_group_count/sum/avg` (consume the query) | `corvid_groupiter_free` |
 | `corvid_schemaiter*` | owned field list + cursor | read-only cursor; **single-threaded** | `corvid_schema` | `corvid_schemaiter_free` |

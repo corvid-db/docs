@@ -93,11 +93,11 @@
 - [Functions: admin](/docs/ffi/functions-admin/): The C ABI function reference part 6 — dump to path, load from path, load with renames, backup, and compact with its exclusivity gate and the FFI-only CORVID_E_BUSY.
 - [Functions: aggregations & mutations](/docs/ffi/functions-data/): The C ABI function reference part 3 — the eleven aggregation functions consuming the query, and the thirteen mutation functions (insert, put_many, insert_auto, update, patch, CAS, deletes, TTL).
 - [Functions: graph & geo](/docs/ffi/functions-graph-geo/): The C ABI function reference part 5 — the graph family (link, link_weighted, unlink, neighbors, in_neighbors, neighbors_weighted, traverse) and the geo & shared iterator family.
-- [Functions: lifecycle & values](/docs/ffi/functions-lifecycle/): The C ABI function reference part 1 — lifecycle and errors (8), collection handles (3), value construction (11) and value reads (12), with signatures, semantics and counterparts.
-- [Functions: predicates & queries](/docs/ffi/functions-query/): The C ABI function reference part 2 — the eleven predicate constructors and combinators (11), and the query builder with rows cursors (15).
+- [Functions: lifecycle & values](/docs/ffi/functions-lifecycle/): The C ABI function reference part 1 — lifecycle and errors (8), collection handles (3), value construction (11) and value reads (13, incl. map_keys since 0.3.0), with signatures, semantics and counterparts.
+- [Functions: predicates & queries](/docs/ffi/functions-query/): The C ABI function reference part 2 — the eleven predicate constructors and combinators (11), the query builder with rows cursors (15), and the direct phrase search (16th of the family since 0.3.0).
 - [Functions: reads & indexes](/docs/ffi/functions-reads/): The C ABI function reference part 4 — reads (get, scan, page, len) and the indexes & schema family (scalar, compound, text, geo, six vector variants, set_schema, schema iterator).
 - [Handles](/docs/ffi/handles/): The C ABI's ten handle types — backing, thread contract, creation and destruction, lifetimes, and the cross-family-free rule.
-- [The C ABI: overview](/docs/ffi/overview/): The corvid C ABI at a glance — the locked rulings (typed calls, no serialization, OOP bindings), artifact shape, version, and how the 122 symbols are organized.
+- [The C ABI: overview](/docs/ffi/overview/): The corvid C ABI at a glance — the locked rulings (typed calls, no serialization, OOP bindings), artifact shape, version, and how the 124 symbols are organized.
 - [Ownership & transfer](/docs/ffi/ownership/): The C ABI's ownership rules — the seven transfer rules, the per-family transfer table (cloned/consumed/borrowed inputs, owned/borrowed outputs), and the UB prohibitions.
 - [Stability & v1 exclusions](/docs/ffi/stability/): The C ABI's naming conventions, frozen enums, pre-1.0 break policy, post-1.0 soname discipline, and the deliberate v1 exclusions with their reopen triggers.
 - [Threading](/docs/ffi/threading/): The C ABI thread-safety contract — thread-safe db/collection handles, single-threaded builders and cursors, thread-local last error, and the compact quiescence rule.
@@ -119,6 +119,6 @@
 
 ## About
 
-- [Changelog highlights](/docs/about/changelog/): Release highlights for corvid and its ecosystem — v0.1.0, v0.1.1, v0.2.0, v0.2.1 — inlined here, self-contained.
+- [Changelog highlights](/docs/about/changelog/): Release highlights for corvid and its ecosystem — v0.1.0, v0.1.1, v0.2.0, v0.2.1, v0.3.0 — inlined here, self-contained.
 - [About these docs](/docs/about/): How corvid's documentation works — the current/snapshot versioning mechanism, the generated-class pages synced from the engine, AI-friendly endpoints (llms.txt, markdown sources), and how to contribute.
 
