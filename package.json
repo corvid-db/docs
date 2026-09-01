@@ -1,0 +1,20 @@
+{
+  "name": "corvid-docs",
+  "type": "module",
+  "version": "0.2.1",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro",
+    "postbuild": "node scripts/gen-llms.mjs",
+    "check-links": "node scripts/check-links.mjs",
+    "sync-from-engine": "bash scripts/sync-from-engine.sh",
+    "verify-sync": "bash scripts/verify-sync.sh"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.41.0",
+    "astro": "^7.2.0"
+  }
+}

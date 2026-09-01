@@ -1,0 +1,53 @@
+---
+// Global version banner (overrides Starlight's frontmatter-driven Banner).
+// Rendered at build time from SITE_VERSION / SITE_BASE — every page carries
+// it, which keeps release-sensitive pages labeled (see "About these docs").
+const version = process.env.SITE_VERSION || '';
+const base = (process.env.SITE_BASE || '/docs').replace(/\/$/, '');
+// Released snapshots to link from the current build (kept by hand):
+const released = ['v0.2.1'];
+---
+
+{version ? (
+  <div class="corvid-banner">
+    <span>
+      You are viewing the <strong>corvid {version}</strong> release snapshot — frozen at the
+      {' '}
+      {version} engine release.
+    </span>
+    <a href="/docs/">Current documentation</a>
+  </div>
+) : (
+  <div class="corvid-banner">
+    <span>
+      <strong>Current</strong> documentation — tracks the engine's development branch
+      (v0.2.1 at the last sync).
+    </span>
+    <span>
+      {released.map((v) => (
+        <a href={`/docs/${v}/`}>{v}</a>
+      ))}
+      <a href={`${base}/about/`}>About these docs</a>
+    </span>
+  </div>
+)}
+
+<style>
+  .corvid-banner {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 0.5rem 1rem;
+    font-size: var(--sl-text-sm);
+    background: color-mix(in oklab, var(--sl-color-accent-low) 55%, transparent);
+    border-bottom: 1px solid var(--sl-color-accent);
+  }
+  .corvid-banner a {
+    color: var(--sl-color-accent-text);
+    font-weight: 600;
+    margin-left: 0.75rem;
+    text-decoration: underline;
+  }
+</style>

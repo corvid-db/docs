@@ -1,0 +1,90 @@
+# Publish a RELEASED VERSION SNAPSHOT of the docs under /vX.Y.Z/.
+#
+# The snapshot is the docs repo's content at the release moment, snapshotted
+# into a `releases/vX.Y.Z` branch (see README — "Versioning"). This workflow
+# builds that branch with SITE_VERSION/SITE_BASE so every page, the banner,
+# sitemap, and llms.txt carry the version, then publishes the output under
+# vX.Y.Z/ on gh-pages — side by side with the current root build.
+#
+# Run it from a tag push of the engine release (automatic for vX.Y.Z.* tags)
+# or manually with a version input.
+
+name: Snapshot vX.Y.Z
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Engine/docs version to snapshot (e.g. 0.2.1)'
+        required: true
+        type: string
+  push:
+    tags: ['v*.*.*']
+
+concurrency:
+  group: pages-snapshot
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    name: build releases/v${{ inputs.version || github.ref_name }} and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ inputs.version || github.ref_name }}
+    steps:
+      - name: Normalize version (strip leading v)
+        run: echo "VER=${VERSION#v}" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: releases/v${{ env.VER }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build versioned site
+        run: npm run build
+        env:
+          SITE_VERSION: ${{ env.VER }}
+          SITE_BASE: /docs/v${{ env.VER }}
+
+      - name: Check internal links
+        run: npm run check-links
+        env:
+          SITE_BASE: /docs/v${{ env.VER }}
+
+      - name: Publish to gh-pages under v${{ env.VER }}/
+        run: |
+          set -euo pipefail
+          git config user.name "corvid-docs-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch origin gh-pages || true
+          if git rev-parse --verify origin/gh-pages >/dev/null 2>&1; then
+            git checkout -B gh-pages origin/gh-pages
+          else
+            git checkout --orphan gh-pages
+            git rm -rf --quiet . || true
+          fi
+          rm -rf "v${VER}"
+          mkdir -p "v${VER}"
+          rsync -a dist/ "v${VER}/"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to publish"
+          else
+            git commit -m "snapshot: v${VER} docs"
+            git push origin gh-pages
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

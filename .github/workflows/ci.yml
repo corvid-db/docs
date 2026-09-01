@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build + link check + sync gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build site (current shape)
+        run: npm run build
+
+      - name: Check internal links
+        run: npm run check-links
+
+      - name: Generated-pages drift gate (must match pinned engine tag)
+        run: npm run verify-sync
+
+      - name: Build site (snapshot shape, exercises /vX.Y.Z/ wiring)
+        run: npm run build
+        env:
+          SITE_VERSION: 0.2.1
+          SITE_BASE: /docs/v0.2.1
+
+      - name: Check snapshot links
+        run: npm run check-links
+        env:
+          SITE_BASE: /docs/v0.2.1

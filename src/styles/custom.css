@@ -1,0 +1,6 @@
+/* corvid docs — small custom layer over Starlight's default theme. */
+
+/* Slightly calmer code blocks for long signature listings. */
+pre {
+  font-size: var(--sl-text-sm);
+}

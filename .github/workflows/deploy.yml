@@ -1,0 +1,73 @@
+# Deploy the CURRENT site (default branch) to the root of GitHub Pages.
+# Version snapshots (released vX.Y.Z builds) live side by side under
+# vX.Y.Z/ and are published by snapshot.yml — this job replaces only the
+# root, preserving every vX.Y.Z/ directory.
+
+name: Deploy site
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: pages-deploy
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    name: build and publish root
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build site
+        run: npm run build
+
+      - name: Check internal links
+        run: npm run check-links
+
+      - name: Publish to gh-pages (root only, preserve vX.Y.Z/)
+        run: |
+          set -euo pipefail
+          git config user.name "corvid-docs-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch origin gh-pages || true
+          if git rev-parse --verify origin/gh-pages >/dev/null 2>&1; then
+            git checkout -B gh-pages origin/gh-pages
+          else
+            git checkout --orphan gh-pages
+            git rm -rf --quiet . || true
+          fi
+          # Wipe the previous root build, keep released snapshot dirs.
+          find . -mindepth 1 -maxdepth 1 \
+            ! -name 'v[0-9]*.[0-9]*.[0-9]*' ! -name '.git' ! -name '.nojekyll' \
+            -exec rm -rf {} +
+          # Lay down the new root build (no --delete: the explicit find above
+          # did the wipe, and the vX.Y.Z dirs must survive rsync).
+          rsync -a dist/ ./
+          # Restore the snapshot dirs (dist build never touches them, but
+          # the find above may have removed them if dist was stale).
+          git checkout origin/gh-pages -- 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || true
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to publish"
+          else
+            git commit -m "deploy: current site from ${GITHUB_SHA::7}"
+            git push origin gh-pages
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
