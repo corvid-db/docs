@@ -87,18 +87,24 @@ ABI’s predicate family.</p>
 arbitrary. Multiple <code dir="auto">.filter(...)</code> calls on one query intersect like <code dir="auto">and</code>.</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="evaluation-semantics">Evaluation semantics</h2><a class="sl-anchor-link" href="#evaluation-semantics"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Evaluation semantics”</span></a></div>
 <ul>
-<li><strong>Missing path ⇒ false</strong> for every predicate except <code dir="auto">exists()</code> (and <code dir="auto">ne</code>,
-which is <code dir="auto">true</code> when the path is missing — see below).</li>
+<li><strong>Missing path ⇒ false</strong> for every predicate except <code dir="auto">exists()</code> — including
+<code dir="auto">ne</code>: “not equal to X” never matches a document that lacks the field
+(pinned by conformance: <em>Ne on a MISSING path is FALSE</em>). Use
+<code dir="auto">exists()</code> composed with <code dir="auto">or</code> when you want missing values to pass.</li>
 <li><strong>Ordered comparisons across non-comparable kinds ⇒ false.</strong> Numbers
 compare numerically across <code dir="auto">Int</code>/<code dir="auto">Float</code> (exact to 2^53); text compares
 lexicographically by UTF-8 bytes; bools, bytes, containers and vectors do
 not participate in <code dir="auto">&#x3C;</code>/<code dir="auto">></code>/<code dir="auto">&#x3C;=</code>/<code dir="auto">>=</code>.</li>
 <li><strong><code dir="auto">eq</code> matches per value kind</strong>, with numeric interop:
 <code dir="auto">field("n").eq(Value::Float(2.0))</code> matches <code dir="auto">Int(2)</code>.</li>
-<li><strong><code dir="auto">ne</code> is the complement of <code dir="auto">eq</code></strong> evaluated over the same rule — a
-missing path or a NaN value therefore yields <code dir="auto">true</code> for <code dir="auto">ne</code>.</li>
+<li><strong><code dir="auto">ne</code> is the complement of <code dir="auto">eq</code></strong> evaluated over a <strong>present</strong> value —
+it is <code dir="auto">true</code> only for a document that carries the field with a
+non-matching value (including any value against a NaN filter); the
+missing-path rule above applies first, so a document without the field
+still yields <code dir="auto">false</code>.</li>
 <li><strong>NaN matches nothing, not even NaN</strong> — a NaN filter value selects the
-empty set under <code dir="auto">eq</code> and ordered ops, and everything <em>else</em> under <code dir="auto">ne</code>.
+empty set under <code dir="auto">eq</code> and ordered ops, and every <em>present</em> value under
+<code dir="auto">ne</code> (documents missing the field still miss — see above).
 (This is the predicate rule; storage equality — CAS, unique constraints —
 treats NaN as equal to NaN. See
 <a href="/docs/language/equality/">equality semantics</a>.)</li>

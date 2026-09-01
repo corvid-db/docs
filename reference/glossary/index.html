@@ -90,8 +90,10 @@ stored value equals <code dir="auto">expected</code> (or is absent). Uses semant
 <p><strong>change event</strong> — an <code dir="auto">Insert</code>/<code dir="auto">Delete</code> notification delivered synchronously
 post-commit to subscribers; the engine has no separate event log.</p>
 <p><strong>class order (ordering)</strong> — <code dir="auto">order_by</code>’s fixed row classes: comparable
-values (numbers, then texts) → incomparable values → rows missing the field;
-ties by key; <code dir="auto">descending</code> reverses within the comparable class only.</p>
+values (numbers, then texts) → incomparable values (kind tag first, so NaN
+precedes the other incomparable kinds; then key) → rows missing the field;
+ties by key; <code dir="auto">descending</code> reverses the within-class order — kind tag and
+value together — in both present classes, never the class order itself.</p>
 <p><strong>collection</strong> — a named namespace of documents, created lazily on first
 write; <code dir="auto">__</code>-prefixed names are engine-reserved.</p>
 <p><strong>compound index</strong> — an index over an ordered field list serving

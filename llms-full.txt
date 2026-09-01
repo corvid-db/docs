@@ -217,7 +217,7 @@ built with chained method calls:
 
 ```text
 filter → vector source → text source → fuse (RRF) → rerank (MMR)
-       → order_by → offset → select → limit → run
+       → order_by → offset → limit → select → run
 ```
 
 Each source is a retrieval candidate generator; the builder fuses and reranks
@@ -438,10 +438,11 @@ use std::collections::BTreeMap;
 let db = Db::open("notes.corvid")?;
 let notes = db.collection("notes");
 
-fn note(title: &str, body: &str, tags: &[&str], embedding: Vec<f32>) -> Value {
+fn note(title: &str, body: &str, source: &str, tags: &[&str], embedding: Vec<f32>) -> Value {
     let mut m = BTreeMap::new();
     m.insert("title".into(), Value::Text(title.into()));
     m.insert("body".into(), Value::Text(body.into()));
+    m.insert("source".into(), Value::Text(source.into()));
     m.insert("tags".into(), Value::Array(
         tags.iter().map(|t| Value::Text((*t).into())).collect()));
     m.insert("embedding".into(), Value::Vector(embedding));
@@ -450,10 +451,10 @@ fn note(title: &str, body: &str, tags: &[&str], embedding: Vec<f32>) -> Value {
 
 notes.insert(b"n1", &note(
     "HNSW graphs", "Hierarchical navigable small world graphs index vectors for approximate search",
-    &["vector", "search"], vec![0.1, 0.9, 0.2]))?;
+    "imported", &["vector", "search"], vec![0.1, 0.9, 0.2]))?;
 notes.insert(b"n2", &note(
     "BM25 in one page", "BM25 ranks documents by term frequency, inverse document frequency, and length",
-    &["search", "text"], vec![0.9, 0.1, 0.4]))?;
+    "manual", &["search", "text"], vec![0.9, 0.1, 0.4]))?;
 // … more documents …
 # Ok::<(), corvid::Error>(())
 ```
@@ -488,7 +489,7 @@ let query_txt = "vector search index";
 
 let rows = notes
     .query()
-    .filter(field("tags").contains("search"))
+    .filter(field("source").eq(Value::Text("imported".into())))
     .vector("embedding", query_vec, 100, Metric::Cosine)
     .text("body", query_txt, 100)
     .fuse_rrf(60.0)
@@ -504,8 +505,14 @@ What each stage does:
 
 1. **`filter`** runs first. It is a true predicate: the candidate set for
    ranking is exactly the matching documents — the top-k is never computed
-   over documents the filter would reject. (With a scalar index on the
-   filtered field, this step is sub-linear.)
+   over documents the filter would reject. Here only the `imported` notes
+   survive (`n2`, the `manual` note, is out before ranking begins). The
+   scalar index on `source` makes this step sub-linear.
+   *Why `source` and not `tags`?* `contains`/`starts_with` are Text-only
+   predicates — on the `tags` **array** they would be `false` for every
+   document (see [filters](/language/filters/)). Filter on a scalar text
+   field, or store tags as a single text field (`"vector search"`), if you
+   need keyword filtering.
 2. **`vector`** adds a similarity source: the 100 nearest embeddings by
    cosine distance among the filtered candidates.
 3. **`text`** adds a BM25 source: the 100 best matches for the query terms.
@@ -650,7 +657,6 @@ let rows = docs.query()
     .text("body", "rust embedded database", 100)               // another source
     .fuse_rrf(60.0)            // reciprocal-rank-fusion constant (optional)
     .rerank_mmr(0.7)           // diversify (optional; needs a vector source)
-    .order_by("score", true)   // or order by a field instead of rank (optional)
     .offset(0)
     .limit(10)
     .select(["title", "meta.author"])  // project returned docs (optional)
@@ -663,6 +669,9 @@ Notes:
 
 - Zero sources → a pure filter/scan query (streamed, bounded memory).
 - One source → ranked by that source. Multiple → fused with RRF.
+- Rank order is what you get above; `order_by(field, desc)` replaces it with
+  a sort on a **literal document field** (there is no special `score` field —
+  to keep rank order, omit `order_by`; the fused score rides on each row).
 - Filtering happens **before** ranking, so the top-k is computed among
   matching documents.
 - `.approx()` lets a *filtered* vector query use the ANN index (over-fetch
@@ -955,18 +964,27 @@ Two rules coexist by design:
 
 ```rust
 # use corvid::{Db, Value, field};
+# use std::collections::BTreeMap;
 # let db = Db::open_in_memory()?; let c = db.collection("t");
+// field("v") traverses maps, so each doc carries its value under "v"
+let doc = |v: Value| {
+    let mut m = BTreeMap::new();
+    m.insert("v".to_string(), v);
+    Value::Map(m)
+};
+
 // Predicate: NaN selects nothing, ne selects the rest
-c.insert(b"a", &Value::Float(f64::NAN))?;
-c.insert(b"b", &Value::Int(2))?;
-c.insert(b"c", &Value::Float(2.0))?;
+c.insert(b"a", &doc(Value::Float(f64::NAN)))?;
+c.insert(b"b", &doc(Value::Int(2)))?;
+c.insert(b"c", &doc(Value::Float(2.0)))?;
 
 c.query().filter(field("v").eq(Value::Float(f64::NAN))).count()?;  // 0
 c.query().filter(field("v").eq(Value::Int(2))).count()?;           // 2 — numeric interop
 c.query().filter(field("v").ne(Value::Int(2))).count()?;           // 1 (the NaN doc)
 
-// Storage equality: NaN matches NaN in compare_and_set
-let matched = c.compare_and_set(b"a", Some(&Value::Float(f64::NAN)), None)?; // true — deleted
+// Storage equality: NaN matches NaN in compare_and_set, element-wise
+// inside containers too — this deletes doc "a"
+let matched = c.compare_and_set(b"a", Some(&doc(Value::Float(f64::NAN))), None)?; // true
 # let _ = matched;
 # Ok::<(), corvid::Error>(())
 ```
@@ -1041,18 +1059,24 @@ arbitrary. Multiple `.filter(...)` calls on one query intersect like `and`.
 
 ## Evaluation semantics
 
-- **Missing path ⇒ false** for every predicate except `exists()` (and `ne`,
-  which is `true` when the path is missing — see below).
+- **Missing path ⇒ false** for every predicate except `exists()` — including
+  `ne`: "not equal to X" never matches a document that lacks the field
+  (pinned by conformance: *Ne on a MISSING path is FALSE*). Use
+  `exists()` composed with `or` when you want missing values to pass.
 - **Ordered comparisons across non-comparable kinds ⇒ false.** Numbers
   compare numerically across `Int`/`Float` (exact to 2^53); text compares
   lexicographically by UTF-8 bytes; bools, bytes, containers and vectors do
   not participate in `<`/`>`/`<=`/`>=`.
 - **`eq` matches per value kind**, with numeric interop:
   `field("n").eq(Value::Float(2.0))` matches `Int(2)`.
-- **`ne` is the complement of `eq`** evaluated over the same rule — a
-  missing path or a NaN value therefore yields `true` for `ne`.
+- **`ne` is the complement of `eq`** evaluated over a **present** value —
+  it is `true` only for a document that carries the field with a
+  non-matching value (including any value against a NaN filter); the
+  missing-path rule above applies first, so a document without the field
+  still yields `false`.
 - **NaN matches nothing, not even NaN** — a NaN filter value selects the
-  empty set under `eq` and ordered ops, and everything *else* under `ne`.
+  empty set under `eq` and ordered ops, and every *present* value under
+  `ne` (documents missing the field still miss — see above).
   (This is the predicate rule; storage equality — CAS, unique constraints —
   treats NaN as equal to NaN. See
   [equality semantics](/language/equality/).)
@@ -1166,13 +1190,19 @@ panicking or interleaving by key.
 
 ```text
 1. comparable values    (in value order)
-2. incomparable values  (bools, containers, vectors, NaN — stable by key)
+2. incomparable values  (bools, containers, vectors, NaN — kind tag first,
+                         then key)
 3. rows missing the field (stable by key)
 ```
 
-Ties inside a class break by key. `descending` reverses the value order
-**within the comparable class only** — the class order
-(comparable < incomparable < missing) is fixed in both directions.
+Ties inside a class break by key. Within the incomparable class, a **kind
+tag** orders the values first — NaN is a numeric kind, so it precedes the
+other incomparable kinds (bools, containers, vectors), which then fall to
+key order among themselves. `descending` reverses the within-class order —
+kind tag and value together — in **both** the comparable and the
+incomparable class; the class order
+(comparable < incomparable < missing) and the key tiebreak are fixed, so
+incomparable and missing values always sort last.
 
 ## The comparable class
 
@@ -1322,7 +1352,6 @@ let rows = docs.query()
     .text("body", "rust embedded database", 100)
     .fuse_rrf(60.0)
     .rerank_mmr(0.7)
-    .order_by("score", true)
     .offset(0)
     .limit(10)
     .select(["title", "meta.author"])
@@ -1371,8 +1400,9 @@ filter/shape query.
 
 ## `rerank_mmr(lambda)`
 
-Maximal-marginal-relevance diversification over the fused ranking, using the
-**last vector source's** query as the relevance anchor. `lambda ∈ [0, 1]`
+Maximal-marginal-relevance diversification over the fused ranking, anchored on
+the **first vector source's** query (with several vector sources, the earliest
+`.vector(...)` call supplies the relevance vector). `lambda ∈ [0, 1]`
 (1 = pure relevance order, 0 = maximal diversity; validated at `run()`).
 Requires a vector source — without one it is a no-op. Documents without an
 embedding survive the rerank unchanged.
@@ -1388,7 +1418,12 @@ large collections but a highly selective filter may return fewer than
 ## `order_by(field, descending)`
 
 Sort by a document field **instead of** rank (rank ordering applies when
-`order_by` is absent). Ordering follows the class rules on
+`order_by` is absent). There is **no special `score` field**:
+`order_by("score", true)` orders by a literal document field named `score` —
+which documents rarely carry, so every row lands in the missing class, sorted
+by key. To get rank order, simply omit `order_by`; the fused RRF score rides
+along on every `ResultRow` if you want to re-sort client-side. Ordering
+follows the class rules on
 [ordering](/language/ordering/): comparable values (numbers numerically —
 numbers before texts across kinds — texts lexically) first; incomparable
 values after; rows missing the field last; ties by key. `descending`
@@ -1659,7 +1694,8 @@ let vec: Option<&[f32]> = doc.as_vector();
 # Ok::<(), corvid::Error>(())
 ```
 
-`as_float` widens an `Int` to `Option<f64>` as well as reading a `Float`.
+`as_float` returns `Some` **only** for a `Float` — unlike comparisons, it does
+not widen an `Int` (use `as_int` and convert yourself when you need that).
 
 ## Dotted paths
 
@@ -2359,6 +2395,50 @@ The in-memory graph exposes the direct API (`corvid::Hnsw`) with
 `DEFAULT_M` / `DEFAULT_EF_CONSTRUCTION` and `with_params` /
 `with_quant` / `with_pq` constructors for advanced control; collection-level
 constructors use the defaults, which the pinned corpora validate for recall.
+
+## The direct APIs: `Hnsw` and `Pq` without a `Collection`
+
+Everything above manages indexes for you inside a `Collection`. The engine
+also exposes the primitives directly — reach for them when your vectors do
+not live in a corvid collection at all, or their lifecycle is shorter than a
+stored document's. `corvid::Hnsw` is the plain in-memory graph: a
+build-once, search-many structure over `Vec<f32>` you own, with no storage,
+persistence, or documents attached — e.g. clustering/deduplicating a batch
+of candidate embeddings at query time, or prototyping recall/latency
+trade-offs before committing to an index configuration. `corvid::pq::Pq` is
+the trained product quantizer on its own: encode vectors to `m` bytes and
+keep the codebook (`to_bytes`/`from_bytes`) wherever you like — shards,
+files, network messages — scoring codes against a query yourself, with the
+same compression the collection-level PQ indexes use.
+
+```rust
+use corvid::{Hnsw, Metric};
+use corvid::pq::Pq;
+use std::sync::Arc;
+
+// Hnsw: insert returns a stable id; search returns (id, distance), nearest first.
+let mut g = Hnsw::new(Metric::Cosine);
+let ids: Vec<usize> = (0..1000).map(|i| g.insert(vec![i as f32 / 1000.0, 1.0])).collect();
+let _ = g.search(&[0.5, 1.0], 10, 100);          // top-10, ef_search = 100
+
+// Pq: train on a sample, encode each vector to m bytes, score against a query.
+let sample: Vec<Vec<f32>> = (0..512).map(|i| vec![i as f32, 1.0]).collect();
+let pq = Pq::train(&sample, 1, 16).expect("m divides dim, sample big enough");
+let code = pq.encode(&[3.0, 1.0]);               // 1 byte per vector
+let d = pq.distance(Metric::L2, &[3.0, 1.0], &code);  // reconstruct-then-distance
+let _ = Arc::new(pq);                             // Hnsw::with_pq takes Arc<Pq>
+let _ = (ids, d);
+```
+
+Notes: `Hnsw::search`'s `ef_search` widens the beam (raised to at least
+`k` — larger is more accurate, slower); `Hnsw::with_pq(metric, Arc<Pq>, m,
+ef_construction)` builds a graph over PQ codes exactly like the collection
+index (L2 via the asymmetric-distance table, cosine/dot via
+reconstruction). `Pq::train` is deterministic for a fixed sample and
+returns `None` on unusable parameters (empty sample, `dim` not divisible by
+`m`, `k` outside `2..=256`); the distance helpers (`Pq::distance`,
+`Pq::l2_table`/`adc_l2`) are covered in the
+[constructs reference](/reference/constructs/).
 
 Next: [quantization](/indexes/quantization/).
 
@@ -5963,8 +6043,10 @@ stored value equals `expected` (or is absent). Uses semantic value equality.
 post-commit to subscribers; the engine has no separate event log.
 
 **class order (ordering)** — `order_by`'s fixed row classes: comparable
-values (numbers, then texts) → incomparable values → rows missing the field;
-ties by key; `descending` reverses within the comparable class only.
+values (numbers, then texts) → incomparable values (kind tag first, so NaN
+precedes the other incomparable kinds; then key) → rows missing the field;
+ties by key; `descending` reverses the within-class order — kind tag and
+value together — in both present classes, never the class order itself.
 
 **collection** — a named namespace of documents, created lazily on first
 write; `__`-prefixed names are engine-reserved.
@@ -6055,11 +6137,12 @@ the index.
 # /docs/about/changelog/
 ================================================================================
 
-Highlights per release, condensed from the
-[engine's CHANGELOG](https://github.com/corvid-db/corvid/blob/master/CHANGELOG.md)
-— which remains the detailed record of every change. Until 1.0, the API and
-on-disk format change without backward-compatibility guarantees; format
-changes migrate via [dump/load](/admin/dump-load/).
+Highlights per release, inlined below so this page stands alone (condensed
+at release time from the engine repository's
+[CHANGELOG](https://github.com/corvid-db/corvid/blob/master/CHANGELOG.md) —
+provenance only; everything you need to evaluate a release is here). Until
+1.0, the API and on-disk format change without backward-compatibility
+guarantees; format changes migrate via [dump/load](/admin/dump-load/).
 
 ## v0.2.1 (2026-08)
 
@@ -6136,7 +6219,7 @@ The first release — the embedded engine complete:
 
 ================================================================================
 # About these docs
-# /docs/about//
+# /docs/about/
 ================================================================================
 
 This site (`corvid-db/docs`) is the canonical documentation for corvid. It

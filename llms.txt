@@ -45,7 +45,7 @@
 - [Vector quantization](/docs/indexes/quantization/): Binary, Scalar and Product Quantization for corvid vector indexes — compression ratios, time premiums, recall margins and the guidance for choosing a mode.
 - [Scalar and compound indexes](/docs/indexes/scalar/): create_scalar_index and create_compound_index — order-preserving keys for sub-linear equality/range filters and counts, prefix-equality plus trailing-range compound windows, and the all_docs_indexed rule.
 - [Text indexes](/docs/indexes/text/): create_text_index and create_text_index_ondisk — BM25 inverted indexes for text_search, phrase_search and builder text sources; in-RAM vs on-disk trade-offs.
-- [Vector indexes](/docs/indexes/vector/): HNSW vector indexes in corvid — the five constructor variants, metrics, exact vs approximate behavior, Hit.approximate, dimension handling and automatic use.
+- [Vector indexes](/docs/indexes/vector/): HNSW vector indexes in corvid — the six constructor variants, metrics, exact vs approximate behavior, Hit.approximate, dimension handling, automatic use, and the direct Hnsw/Pq APIs.
 
 ## Full-text search
 
@@ -117,6 +117,6 @@
 
 ## About
 
-- [Changelog highlights](/docs/about/changelog/): Release highlights for corvid and its ecosystem — v0.1.0, v0.1.1, v0.2.0, v0.2.1 — condensed from the engine's CHANGELOG; the engine changelog remains the record of record.
-- [About these docs](/docs/about//): How corvid's documentation works — the current/snapshot versioning mechanism, the generated-class pages synced from the engine, AI-friendly endpoints (llms.txt, markdown sources), and how to contribute.
+- [Changelog highlights](/docs/about/changelog/): Release highlights for corvid and its ecosystem — v0.1.0, v0.1.1, v0.2.0, v0.2.1 — inlined here, self-contained.
+- [About these docs](/docs/about/): How corvid's documentation works — the current/snapshot versioning mechanism, the generated-class pages synced from the engine, AI-friendly endpoints (llms.txt, markdown sources), and how to contribute.
 
