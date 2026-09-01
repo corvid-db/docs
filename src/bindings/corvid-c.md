@@ -1,6 +1,6 @@
 ---
 title: corvid-c
-description: The corvid-c reference C consumer — fetch and verify release artifacts, link, run the golden suite; quick start, installing, and the v0.2.0 macOS artifact story.
+description: The corvid-c reference C consumer — fetch and verify release artifacts, link, run the golden suite and the six-example tour; quickstart and hybrid examples, installing, and the v0.2.0 macOS artifact story.
 sidebar:
  order: 1
 ---
@@ -14,56 +14,215 @@ work for a plain C consumer. Its role in the bindings program is
 the way a third-party binding author would — no engine checkout, no
 vendored binaries.
 
+**When to choose this binding:** you are writing C (or building another
+binding, a plugin, or an embedded deployment) and want the zero-dependency
+path — no Rust toolchain, no language runtime, just a C11 compiler, CMake,
+and the sha256-verified release archive. It is also the reference for how
+the ABI's ownership rules (cloned inputs, consumed queries and predicates,
+borrowed row views) are meant to be driven by hand, and the place where
+published-artifact defects surface first.
+
 ## What's inside
 
 | Path | What it is |
 |---|---|
 | `fetch.sh` / `fetch.ps1` | Download the pinned release archive, verify against the release's `checksums.txt` (sha256), extract into gitignored `deps/` |
-| `CMakeLists.txt` | Offline-first build consuming `deps/`; builds the demo and the golden-suite port; installs a `corvid.pc` |
-| `examples/demo.c` | A small idiomatic consumer: open, insert, query, print (~15 symbols) |
+| `CMakeLists.txt` | Offline-first build consuming `deps/`; builds the demo, the examples tour, and the golden-suite port; installs a `corvid.pc` |
+| `examples/demo.c` | A small idiomatic consumer: open, insert, query, print (~20 symbols) |
+| `examples/{quickstart,hybrid,vector_index,text_search,graph,geo}.c` | The examples tour — one runnable program per concept, each a ctest on every CI leg |
 | `test/golden.c` | The golden-suite port — replays the engine's 256-line fixture suite against the downloaded libcorvid |
 
 ## Quick start
 
-Requirements: a C11 compiler, CMake ≥ 3.16, `curl` + `shasum`/`sha256sum`
+Requirements: a C11 compiler, CMake ≥ 3.28, `curl` + `shasum`/`sha256sum`
 (macOS/Linux) or PowerShell 5+ (Windows).
 
 ```sh
 ./fetch.sh                     # download + verify corvid v0.2.1 into deps/
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-ctest --test-dir build --output-on-failure   # the golden suite (256 lines)
+ctest --test-dir build --output-on-failure   # golden suite + demo + examples
 ./build/bin/demo                              # open → insert → query → print
+./build/bin/example_hybrid                    # the flagship hybrid query
 ```
 
 Windows: `./fetch.ps1`, then the same CMake steps (`ctest -C Release`).
 
-## A taste of the API
+## The examples
+
+Six runnable programs, each also a ctest (and each leak-clean under the
+CI sanitizer job): **quickstart** (open, insert, kNN, print), **hybrid**
+(filter + vector + BM25, RRF fusion, MMR rerank, limit), **vector_index**
+(in-memory / on-disk / binary-quantized HNSW vs the exact scan, plus a
+close/reopen), **text_search** (BM25, English + CJK), **graph**
+(neighbors/traverse + delete cascade), and **geo** (radius / bbox /
+nearest with haversine kilometres). The quickstart and hybrid sources
+are embedded below — imported from the repo's `examples/` so they cannot
+drift from what CI executes (`scripts/sync-binding-examples.sh` keeps
+this page in step; the drift gate reddens CI if they diverge).
+
+### Quickstart
+
+<!-- corvid-examples:quickstart BEGIN -->
 
 ```c
-#include "corvid.h"
+static void put_doc(corvid_coll *docs, const char *key, const char *title,
+                    const char *kind, const float *v, size_t dim) {
+    corvid_value *doc = corvid_value_map_new();
+    must("map_put title", corvid_value_map_put(
+        doc, "title", 5, corvid_value_text(title, strlen(title))));
+    must("map_put kind", corvid_value_map_put(
+        doc, "kind", 4, corvid_value_text(kind, strlen(kind))));
+    must("map_put v",
+         corvid_value_map_put(doc, "v", 1, corvid_value_vector(v, dim)));
+    must("insert", corvid_insert(docs, (const uint8_t *)key, strlen(key), doc));
+    corvid_value_free(doc); /* insert CLONES the value; ours is still ours */
+}
 
-corvid_db *db = corvid_open_memory();
-corvid_coll *docs = corvid_collection(db, "docs", 4);
+int main(void) {
+    corvid_db *db = corvid_open_memory();
+    if (!db) { fprintf(stderr, "quickstart: open failed\n"); return 1; }
+    corvid_coll *docs = corvid_collection(db, "docs", 4);
+    if (!docs) { fprintf(stderr, "quickstart: collection failed\n"); return 1; }
 
-corvid_value *doc = corvid_value_map_new();
-corvid_value_map_put(doc, "name", 4, corvid_value_text("ada", 3));
-corvid_value_map_put(doc, "v", 1, corvid_value_vector(v, 3));
-corvid_insert(docs, (const uint8_t *)"p1", 2, doc);   /* clones the value */
-corvid_value_free(doc);
+    put_doc(docs, "p1", "rust embedded database", "doc",
+            (const float[]){1.0f, 0.0f}, 2);
+    put_doc(docs, "p2", "python web frameworks", "doc",
+            (const float[]){0.0f, 1.0f}, 2);
+    put_doc(docs, "p3", "rust again database", "doc",
+            (const float[]){0.9f, 0.1f}, 2);
 
-corvid_query *q = corvid_query_new(docs);
-corvid_query_vector(q, "v", 1, probe, 3, 2, CORVID_METRIC_COSINE);
-corvid_rows *rows = corvid_query_run(q);              /* consumes q */
-/* … corvid_rows_next(rows, &key, &key_len, &doc, &score) … */
-corvid_rows_free(rows);
-corvid_collection_free(docs);
-corvid_close(db);
+    /* kNN: the 3 nearest documents to (1, 0) under cosine. */
+    corvid_query *q = corvid_query_new(docs);
+    if (!q) { fprintf(stderr, "quickstart: query_new failed\n"); return 1; }
+    must("query_vector",
+         corvid_query_vector(q, "v", 1, (const float[]){1.0f, 0.0f}, 2, 3,
+                             CORVID_METRIC_COSINE));
+    corvid_rows *rows = corvid_query_run(q); /* consumes q */
+    if (!rows) {
+        size_t len = 0;
+        const char *msg = corvid_last_error_message(&len);
+        fprintf(stderr, "quickstart: query_run failed: %.*s\n", (int)len, msg);
+        return 1;
+    }
+
+    int rank = 0;
+    for (;;) {
+        const uint8_t *key = NULL;
+        size_t key_len = 0;
+        const corvid_value *doc = NULL;
+        float score = 0.0f;
+        if (corvid_rows_next(rows, &key, &key_len, &doc, &score) != 1) break;
+        const corvid_value *title =
+            corvid_value_map_get(doc, "title", 5);
+        size_t title_len = 0;
+        const char *title_p = corvid_value_text_ref(title, &title_len);
+        printf("%d. %-.*s score=%.6f %.*s\n", ++rank, (int)key_len, key,
+               (double)score, (int)title_len, title_p ? title_p : "?");
+    }
+    corvid_rows_free(rows);
+
+    corvid_collection_free(docs);
+    must("close", corvid_close(db));
+    return 0;
+}
 ```
 
+<!-- corvid-examples:quickstart END -->
+
+### Hybrid retrieval
+
+<!-- corvid-examples:hybrid BEGIN -->
+
+```c
+static void put_doc(corvid_coll *docs, const char *key, const char *kind,
+                    const char *body, const float *v) {
+    corvid_value *doc = corvid_value_map_new();
+    must("map_put kind", corvid_value_map_put(
+        doc, "kind", 4, corvid_value_text(kind, strlen(kind))));
+    if (body)
+        must("map_put body", corvid_value_map_put(
+            doc, "body", 4, corvid_value_text(body, strlen(body))));
+    if (v)
+        must("map_put v",
+             corvid_value_map_put(doc, "v", 1, corvid_value_vector(v, 2)));
+    must("insert", corvid_insert(docs, (const uint8_t *)key, strlen(key), doc));
+    corvid_value_free(doc);
+}
+
+static void print_rows(corvid_rows *rows) {
+    int rank = 0;
+    for (;;) {
+        const uint8_t *key = NULL;
+        size_t key_len = 0;
+        const corvid_value *doc = NULL;
+        float score = 0.0f;
+        if (corvid_rows_next(rows, &key, &key_len, &doc, &score) != 1) break;
+        const corvid_value *body = corvid_value_map_get(doc, "body", 4);
+        size_t body_len = 0;
+        const char *body_p = corvid_value_text_ref(body, &body_len);
+        printf("%d. %-.*s score=%.6f %.*s\n", ++rank, (int)key_len, key,
+               (double)score, (int)body_len, body_p ? body_p : "?");
+    }
+    corvid_rows_free(rows);
+}
+
+int main(void) {
+    corvid_db *db = corvid_open_memory();
+    if (!db) { fprintf(stderr, "hybrid: open failed\n"); return 1; }
+    corvid_coll *docs = corvid_collection(db, "docs", 4);
+    if (!docs) { fprintf(stderr, "hybrid: collection failed\n"); return 1; }
+
+    put_doc(docs, "s1", "doc", "rust embedded database",
+            (const float[]){1.0f, 0.0f});
+    put_doc(docs, "s2", "doc", "python web frameworks",
+            (const float[]){0.0f, 1.0f});
+    put_doc(docs, "s3", "doc", "rust again database",
+            (const float[]){0.9f, 0.1f});
+    put_doc(docs, "m1", "meta", NULL, NULL); /* filtered out below */
+
+    /* The flagship query: filter + vector + text, RRF + MMR + limit. */
+    corvid_query *q = corvid_query_new(docs);
+    if (!q) { fprintf(stderr, "hybrid: query_new failed\n"); return 1; }
+
+    corvid_pred *only_docs =
+        corvid_pred_compare("kind", 4, CORVID_CMP_EQ,
+                             corvid_value_text("doc", 3));
+    if (!only_docs) { fprintf(stderr, "hybrid: pred_compare failed\n"); return 1; }
+    must("query_filter", corvid_query_filter(q, only_docs)); /* consumes pred */
+
+    must("query_vector",
+         corvid_query_vector(q, "v", 1, (const float[]){1.0f, 0.0f}, 2, 2,
+                             CORVID_METRIC_COSINE));
+    must("query_text",
+         corvid_query_text(q, "body", 4, "rust database", 13, 2));
+    must("query_fuse_rrf", corvid_query_fuse_rrf(q, 60.0f));
+    must("query_rerank_mmr", corvid_query_rerank_mmr(q, 1.0f));
+    must("query_limit", corvid_query_limit(q, 2));
+
+    corvid_rows *rows = corvid_query_run(q); /* consumes q */
+    if (!rows) {
+        size_t len = 0;
+        const char *msg = corvid_last_error_message(&len);
+        fprintf(stderr, "hybrid: query_run failed: %.*s\n", (int)len, msg);
+        return 1;
+    }
+    print_rows(rows);
+
+    corvid_collection_free(docs);
+    must("close", corvid_close(db));
+    return 0;
+}
+```
+
+<!-- corvid-examples:hybrid END -->
+
+The fused scores are RRF rank sums: `s1` is rank 1 of both sources
+(1/61 + 1/61 = 2/61 ≈ 0.032787), `s3` rank 2 of both (2/62 ≈ 0.032258).
+
 Every construct maps to the [ABI function pages](/ffi/functions-lifecycle/);
-the ownership flow (cloned document inputs, consumed query, borrowed row
-views) follows the [transfer rules](/ffi/ownership/).
+the ownership flow (cloned document inputs, consumed query and predicate,
+borrowed row views) follows the [transfer rules](/ffi/ownership/).
 
 ## Installing (system use)
 

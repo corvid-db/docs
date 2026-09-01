@@ -5241,56 +5241,215 @@ work for a plain C consumer. Its role in the bindings program is
 the way a third-party binding author would — no engine checkout, no
 vendored binaries.
 
+**When to choose this binding:** you are writing C (or building another
+binding, a plugin, or an embedded deployment) and want the zero-dependency
+path — no Rust toolchain, no language runtime, just a C11 compiler, CMake,
+and the sha256-verified release archive. It is also the reference for how
+the ABI's ownership rules (cloned inputs, consumed queries and predicates,
+borrowed row views) are meant to be driven by hand, and the place where
+published-artifact defects surface first.
+
 ## What's inside
 
 | Path | What it is |
 |---|---|
 | `fetch.sh` / `fetch.ps1` | Download the pinned release archive, verify against the release's `checksums.txt` (sha256), extract into gitignored `deps/` |
-| `CMakeLists.txt` | Offline-first build consuming `deps/`; builds the demo and the golden-suite port; installs a `corvid.pc` |
-| `examples/demo.c` | A small idiomatic consumer: open, insert, query, print (~15 symbols) |
+| `CMakeLists.txt` | Offline-first build consuming `deps/`; builds the demo, the examples tour, and the golden-suite port; installs a `corvid.pc` |
+| `examples/demo.c` | A small idiomatic consumer: open, insert, query, print (~20 symbols) |
+| `examples/{quickstart,hybrid,vector_index,text_search,graph,geo}.c` | The examples tour — one runnable program per concept, each a ctest on every CI leg |
 | `test/golden.c` | The golden-suite port — replays the engine's 256-line fixture suite against the downloaded libcorvid |
 
 ## Quick start
 
-Requirements: a C11 compiler, CMake ≥ 3.16, `curl` + `shasum`/`sha256sum`
+Requirements: a C11 compiler, CMake ≥ 3.28, `curl` + `shasum`/`sha256sum`
 (macOS/Linux) or PowerShell 5+ (Windows).
 
 ```sh
 ./fetch.sh                     # download + verify corvid v0.2.1 into deps/
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-ctest --test-dir build --output-on-failure   # the golden suite (256 lines)
+ctest --test-dir build --output-on-failure   # golden suite + demo + examples
 ./build/bin/demo                              # open → insert → query → print
+./build/bin/example_hybrid                    # the flagship hybrid query
 ```
 
 Windows: `./fetch.ps1`, then the same CMake steps (`ctest -C Release`).
 
-## A taste of the API
+## The examples
+
+Six runnable programs, each also a ctest (and each leak-clean under the
+CI sanitizer job): **quickstart** (open, insert, kNN, print), **hybrid**
+(filter + vector + BM25, RRF fusion, MMR rerank, limit), **vector_index**
+(in-memory / on-disk / binary-quantized HNSW vs the exact scan, plus a
+close/reopen), **text_search** (BM25, English + CJK), **graph**
+(neighbors/traverse + delete cascade), and **geo** (radius / bbox /
+nearest with haversine kilometres). The quickstart and hybrid sources
+are embedded below — imported from the repo's `examples/` so they cannot
+drift from what CI executes (`scripts/sync-binding-examples.sh` keeps
+this page in step; the drift gate reddens CI if they diverge).
+
+### Quickstart
+
+<!-- corvid-examples:quickstart BEGIN -->
 
 ```c
-#include "corvid.h"
+static void put_doc(corvid_coll *docs, const char *key, const char *title,
+                    const char *kind, const float *v, size_t dim) {
+    corvid_value *doc = corvid_value_map_new();
+    must("map_put title", corvid_value_map_put(
+        doc, "title", 5, corvid_value_text(title, strlen(title))));
+    must("map_put kind", corvid_value_map_put(
+        doc, "kind", 4, corvid_value_text(kind, strlen(kind))));
+    must("map_put v",
+         corvid_value_map_put(doc, "v", 1, corvid_value_vector(v, dim)));
+    must("insert", corvid_insert(docs, (const uint8_t *)key, strlen(key), doc));
+    corvid_value_free(doc); /* insert CLONES the value; ours is still ours */
+}
 
-corvid_db *db = corvid_open_memory();
-corvid_coll *docs = corvid_collection(db, "docs", 4);
+int main(void) {
+    corvid_db *db = corvid_open_memory();
+    if (!db) { fprintf(stderr, "quickstart: open failed\n"); return 1; }
+    corvid_coll *docs = corvid_collection(db, "docs", 4);
+    if (!docs) { fprintf(stderr, "quickstart: collection failed\n"); return 1; }
 
-corvid_value *doc = corvid_value_map_new();
-corvid_value_map_put(doc, "name", 4, corvid_value_text("ada", 3));
-corvid_value_map_put(doc, "v", 1, corvid_value_vector(v, 3));
-corvid_insert(docs, (const uint8_t *)"p1", 2, doc);   /* clones the value */
-corvid_value_free(doc);
+    put_doc(docs, "p1", "rust embedded database", "doc",
+            (const float[]){1.0f, 0.0f}, 2);
+    put_doc(docs, "p2", "python web frameworks", "doc",
+            (const float[]){0.0f, 1.0f}, 2);
+    put_doc(docs, "p3", "rust again database", "doc",
+            (const float[]){0.9f, 0.1f}, 2);
 
-corvid_query *q = corvid_query_new(docs);
-corvid_query_vector(q, "v", 1, probe, 3, 2, CORVID_METRIC_COSINE);
-corvid_rows *rows = corvid_query_run(q);              /* consumes q */
-/* … corvid_rows_next(rows, &key, &key_len, &doc, &score) … */
-corvid_rows_free(rows);
-corvid_collection_free(docs);
-corvid_close(db);
+    /* kNN: the 3 nearest documents to (1, 0) under cosine. */
+    corvid_query *q = corvid_query_new(docs);
+    if (!q) { fprintf(stderr, "quickstart: query_new failed\n"); return 1; }
+    must("query_vector",
+         corvid_query_vector(q, "v", 1, (const float[]){1.0f, 0.0f}, 2, 3,
+                             CORVID_METRIC_COSINE));
+    corvid_rows *rows = corvid_query_run(q); /* consumes q */
+    if (!rows) {
+        size_t len = 0;
+        const char *msg = corvid_last_error_message(&len);
+        fprintf(stderr, "quickstart: query_run failed: %.*s\n", (int)len, msg);
+        return 1;
+    }
+
+    int rank = 0;
+    for (;;) {
+        const uint8_t *key = NULL;
+        size_t key_len = 0;
+        const corvid_value *doc = NULL;
+        float score = 0.0f;
+        if (corvid_rows_next(rows, &key, &key_len, &doc, &score) != 1) break;
+        const corvid_value *title =
+            corvid_value_map_get(doc, "title", 5);
+        size_t title_len = 0;
+        const char *title_p = corvid_value_text_ref(title, &title_len);
+        printf("%d. %-.*s score=%.6f %.*s\n", ++rank, (int)key_len, key,
+               (double)score, (int)title_len, title_p ? title_p : "?");
+    }
+    corvid_rows_free(rows);
+
+    corvid_collection_free(docs);
+    must("close", corvid_close(db));
+    return 0;
+}
 ```
 
+<!-- corvid-examples:quickstart END -->
+
+### Hybrid retrieval
+
+<!-- corvid-examples:hybrid BEGIN -->
+
+```c
+static void put_doc(corvid_coll *docs, const char *key, const char *kind,
+                    const char *body, const float *v) {
+    corvid_value *doc = corvid_value_map_new();
+    must("map_put kind", corvid_value_map_put(
+        doc, "kind", 4, corvid_value_text(kind, strlen(kind))));
+    if (body)
+        must("map_put body", corvid_value_map_put(
+            doc, "body", 4, corvid_value_text(body, strlen(body))));
+    if (v)
+        must("map_put v",
+             corvid_value_map_put(doc, "v", 1, corvid_value_vector(v, 2)));
+    must("insert", corvid_insert(docs, (const uint8_t *)key, strlen(key), doc));
+    corvid_value_free(doc);
+}
+
+static void print_rows(corvid_rows *rows) {
+    int rank = 0;
+    for (;;) {
+        const uint8_t *key = NULL;
+        size_t key_len = 0;
+        const corvid_value *doc = NULL;
+        float score = 0.0f;
+        if (corvid_rows_next(rows, &key, &key_len, &doc, &score) != 1) break;
+        const corvid_value *body = corvid_value_map_get(doc, "body", 4);
+        size_t body_len = 0;
+        const char *body_p = corvid_value_text_ref(body, &body_len);
+        printf("%d. %-.*s score=%.6f %.*s\n", ++rank, (int)key_len, key,
+               (double)score, (int)body_len, body_p ? body_p : "?");
+    }
+    corvid_rows_free(rows);
+}
+
+int main(void) {
+    corvid_db *db = corvid_open_memory();
+    if (!db) { fprintf(stderr, "hybrid: open failed\n"); return 1; }
+    corvid_coll *docs = corvid_collection(db, "docs", 4);
+    if (!docs) { fprintf(stderr, "hybrid: collection failed\n"); return 1; }
+
+    put_doc(docs, "s1", "doc", "rust embedded database",
+            (const float[]){1.0f, 0.0f});
+    put_doc(docs, "s2", "doc", "python web frameworks",
+            (const float[]){0.0f, 1.0f});
+    put_doc(docs, "s3", "doc", "rust again database",
+            (const float[]){0.9f, 0.1f});
+    put_doc(docs, "m1", "meta", NULL, NULL); /* filtered out below */
+
+    /* The flagship query: filter + vector + text, RRF + MMR + limit. */
+    corvid_query *q = corvid_query_new(docs);
+    if (!q) { fprintf(stderr, "hybrid: query_new failed\n"); return 1; }
+
+    corvid_pred *only_docs =
+        corvid_pred_compare("kind", 4, CORVID_CMP_EQ,
+                             corvid_value_text("doc", 3));
+    if (!only_docs) { fprintf(stderr, "hybrid: pred_compare failed\n"); return 1; }
+    must("query_filter", corvid_query_filter(q, only_docs)); /* consumes pred */
+
+    must("query_vector",
+         corvid_query_vector(q, "v", 1, (const float[]){1.0f, 0.0f}, 2, 2,
+                             CORVID_METRIC_COSINE));
+    must("query_text",
+         corvid_query_text(q, "body", 4, "rust database", 13, 2));
+    must("query_fuse_rrf", corvid_query_fuse_rrf(q, 60.0f));
+    must("query_rerank_mmr", corvid_query_rerank_mmr(q, 1.0f));
+    must("query_limit", corvid_query_limit(q, 2));
+
+    corvid_rows *rows = corvid_query_run(q); /* consumes q */
+    if (!rows) {
+        size_t len = 0;
+        const char *msg = corvid_last_error_message(&len);
+        fprintf(stderr, "hybrid: query_run failed: %.*s\n", (int)len, msg);
+        return 1;
+    }
+    print_rows(rows);
+
+    corvid_collection_free(docs);
+    must("close", corvid_close(db));
+    return 0;
+}
+```
+
+<!-- corvid-examples:hybrid END -->
+
+The fused scores are RRF rank sums: `s1` is rank 1 of both sources
+(1/61 + 1/61 = 2/61 ≈ 0.032787), `s3` rank 2 of both (2/62 ≈ 0.032258).
+
 Every construct maps to the [ABI function pages](/ffi/functions-lifecycle/);
-the ownership flow (cloned document inputs, consumed query, borrowed row
-views) follows the [transfer rules](/ffi/ownership/).
+the ownership flow (cloned document inputs, consumed query and predicate,
+borrowed row views) follows the [transfer rules](/ffi/ownership/).
 
 ## Installing (system use)
 
@@ -5321,6 +5480,202 @@ Next: [corvid-node](/bindings/corvid-node/).
 
 
 ================================================================================
+# corvid-go
+# /docs/bindings/corvid-go/
+================================================================================
+
+[`corvid-go`](https://github.com/corvid-db/corvid-go) is the Go binding:
+it links the engine's **published FFI artifacts** (the platform cdylib and
+`corvid.h`) over **cgo** and carries an idiomatic Go API on top — `Db`,
+`Collection`, a fluent `Query` builder, and `Field(...)` predicates.
+Deliberately different from the node/python bindings (Rust-source builds):
+Go users expect a system/shared library, not a Rust toolchain — `make deps`
+fetches and sha256-verifies the pinned release archive, and the requirement
+stops at "a C compiler", which cgo already needs.
+
+**When to choose this binding:** your service is written in Go and you want
+corvid embedded without CGO-free purism getting in the way — errors are Go
+errors (`*corvid.CorvidError`, never panics), `Db` and `Collection` are
+safe for concurrent use, and the engine loads as a shared library your
+binary links at runtime.
+
+## Install
+
+From the pinned release artifacts (default):
+
+```sh
+make deps          # fetch + verify corvid v0.2.1 into deps/current
+go test ./...      # the golden suite (256 fixture lines)
+```
+
+Requirements: Go ≥ 1.26, a C compiler (CGO enabled — the default when one
+is present), `curl` + `shasum`/`sha256sum`. Or, if corvid is installed as
+a system library, point cgo at it with `CGO_CFLAGS` / `CGO_LDFLAGS` (see
+the repo README).
+
+## The v0.2.1 map-key boundary
+
+The v0.2.1 C ABI has **no map-key iterator** — a stored map is readable
+only by known key. Consequences in this binding (either-correct-or-loud):
+
+- `Get`/`Scan`/`Page` decode map documents through a candidate-key set fed
+  by everything written through the binding; a map with unknown keys fails
+  wrapping `corvid.ErrMapKeyEnumeration` rather than guessing.
+- `GetFields(key, fields...)` and `Query.Select(fields...)` (projection —
+  the only shape in which `Run` materializes `Row.Doc`) never need the
+  oracle and work on any database. Without `Select`, `Row.Doc` is nil:
+  carry the key, read the document explicitly.
+
+The upstream `corvid_value_map_keys` ABI append will collapse this into a
+plain decode.
+
+## The examples
+
+Six runnable programs under the repo's `examples/` directory (`go run
+./examples/<name>`), executed on every CI leg with deterministic output:
+**quickstart**, **hybrid** (the flagship below), **vector-index**
+(in-memory / on-disk / binary-quantized HNSW vs the exact scan),
+**text-search** (BM25 incl. CJK bigram segmentation), **graph**
+(neighbors/traverse + delete cascade), and **geo** (radius / bbox /
+nearest). The quickstart and hybrid sources are embedded below — imported
+from the repo so they cannot drift from what CI executes
+(`scripts/sync-binding-examples.sh`; the drift gate reddens docs CI if
+they diverge).
+
+### Quickstart
+
+<!-- corvid-examples:quickstart BEGIN -->
+
+```go
+func main() {
+	db, err := corvid.OpenMemory()
+	if err != nil {
+		panic(err)
+	}
+	defer func() { must(db.Close()) }()
+
+	docs, err := db.Collection("docs")
+	if err != nil {
+		panic(err)
+	}
+	defer docs.Close()
+
+	must(docs.Insert([]byte("p1"), map[string]any{
+		"title": "rust embedded database", "kind": "doc",
+		"v": []float32{1.0, 0.0},
+	}))
+	must(docs.Insert([]byte("p2"), map[string]any{
+		"title": "python web frameworks", "kind": "doc",
+		"v": []float32{0.0, 1.0},
+	}))
+	must(docs.Insert([]byte("p3"), map[string]any{
+		"title": "rust again database", "kind": "doc",
+		"v": []float32{0.9, 0.1},
+	}))
+
+	// kNN: the 3 nearest documents to (1, 0) under cosine. Row.Doc is
+	// materialized only under Select (the v0.2.1 ABI has no map-key
+	// iterator) — select the field the printout needs.
+	rows, err := docs.Query().
+		Vector("v", []float32{1.0, 0.0}, 3, corvid.MetricCosine).
+		Select("title").
+		Run()
+	if err != nil {
+		panic(err)
+	}
+	for rank, r := range rows {
+		fmt.Printf("%d. %s score=%.6f %v\n", rank+1, r.Key, r.Score, r.Doc)
+	}
+}
+```
+
+<!-- corvid-examples:quickstart END -->
+
+### Hybrid retrieval
+
+<!-- corvid-examples:hybrid BEGIN -->
+
+```go
+func main() {
+	db, err := corvid.OpenMemory()
+	if err != nil {
+		panic(err)
+	}
+	defer func() { must(db.Close()) }()
+
+	docs, err := db.Collection("docs")
+	if err != nil {
+		panic(err)
+	}
+	defer docs.Close()
+
+	must(docs.Insert([]byte("s1"), map[string]any{
+		"kind": "doc", "body": "rust embedded database",
+		"v": []float32{1.0, 0.0},
+	}))
+	must(docs.Insert([]byte("s2"), map[string]any{
+		"kind": "doc", "body": "python web frameworks",
+		"v": []float32{0.0, 1.0},
+	}))
+	must(docs.Insert([]byte("s3"), map[string]any{
+		"kind": "doc", "body": "rust again database",
+		"v": []float32{0.9, 0.1},
+	}))
+	must(docs.Insert([]byte("m1"), map[string]any{"kind": "meta"})) // filtered out below
+
+	// The flagship query: filter + vector + text, RRF + MMR + limit.
+	rows, err := docs.Query().
+		Filter(corvid.Field("kind").Eq("doc")).
+		Vector("v", []float32{1.0, 0.0}, 2, corvid.MetricCosine).
+		Text("body", "rust database", 2).
+		FuseRRF(60).
+		RerankMMR(1.0).
+		Limit(2).
+		Select("body").
+		Run()
+	if err != nil {
+		panic(err)
+	}
+	for rank, r := range rows {
+		fmt.Printf("%d. %s score=%.6f %v\n", rank+1, r.Key, r.Score, r.Doc)
+	}
+}
+```
+
+<!-- corvid-examples:hybrid END -->
+
+The fused scores are RRF rank sums: `s1` is rank 1 of both sources
+(1/61 + 1/61 = 2/61 ≈ 0.032787), `s3` rank 2 of both (2/62 ≈ 0.032258).
+
+## Value mapping
+
+| Go | engine |
+|---|---|
+| `nil` / `bool` / `string` | Null / Bool / Text |
+| `int64` | Int (full i64) |
+| `float64` | Float — NaN and ±inf cross bit-exactly |
+| `[]byte` | Bytes |
+| `[]float32` | Vector |
+| `[]any` / `map[string]any` | Array / Map |
+
+Keys are `[]byte`. Errors are `*corvid.CorvidError` (implements `error` +
+`Code()`); `Query`/`Predicate` builders are single-goroutine,
+build-once, consumed-by-the-terminal; `Close` on every handle, with
+runtime finalizers as backstops only.
+
+## Correctness story
+
+The binding replays the engine's **golden suite** — the same 256-line
+fixture files the C ABI smoke harness runs, vendored byte-identical and
+verified against each release — through its public API on every CI run
+(`golden_test.go`), then executes the six-example tour under `go run`
+(and golangci-lint). The plan (architecture ruling, lifetime mapping,
+pointer discipline) lives in the repo.
+
+Next: the [reference section](/reference/constructs/).
+
+
+================================================================================
 # corvid-node
 # /docs/bindings/corvid-node/
 ================================================================================
@@ -5331,22 +5686,55 @@ release tag), exposed as idiomatic **synchronous OOP** — `Db`, `Collection`,
 a fluent `Query` builder, and `field()` predicates. No SQL, no JSON, no
 serialization on the data path; values map natively.
 
+**When to choose this binding:** your application is Node.js (servers,
+CLIs, tooling) and you want an embedded database with vector/text/hybrid
+search, graph edges, and geo — without running a separate database server.
+The engine compiles into the process (a prebuilt native binary per
+platform), calls are synchronous, and JavaScript values cross the boundary
+natively. For browsers, wait for the planned wasm binding; for a system
+library you can link from anything, see [corvid-c](/bindings/corvid-c/).
+
 ## Install
 
 ```sh
 npm i corvid-node
 ```
 
-Prebuilt binaries cover `darwin-arm64` / `darwin-x64` / `linux-x64-gnu` /
-`linux-arm64-gnu` / `win32-x64-msvc`. Other platforms build from source
-(Rust ≥ 1.88 + a C toolchain): `npm run build`.
+**Pending first publish** — the package is not on npm yet; publishing waits
+on the platform packages existing first (the repo's plan §5). Until then
+build from source (Rust ≥ 1.88 + a C toolchain):
 
-## Usage
+```sh
+npm install
+npm run build
+```
+
+Prebuilt binaries (`optionalDependencies`) will cover
+`darwin-arm64` / `darwin-x64` / `linux-x64-gnu` / `linux-arm64-gnu` /
+`win32-x64-msvc`.
+
+## The examples
+
+Six runnable programs in the repo's `examples/` directory, executed on
+every CI leg with deterministic output: **quickstart**, **hybrid** (the
+flagship below), **vector-index** (in-memory / on-disk / binary-quantized
+HNSW vs the exact scan), **text-search** (BM25 incl. CJK bigram
+segmentation), **graph** (neighbors/traverse + delete cascade), and
+**geo** (radius / bbox / nearest). The quickstart and hybrid sources are
+embedded below — imported from the repo so they cannot drift from what CI
+executes (`scripts/sync-binding-examples.sh`; the drift gate reddens docs
+CI if they diverge). Run them from a checkout with
+`npm run build && node examples/hybrid.js` (they `require('..')`; in an
+application, `require('corvid-node')`).
+
+### Quickstart
+
+<!-- corvid-examples:quickstart BEGIN -->
 
 ```js
-const { Db, field } = require('corvid-node');
+const { Db } = require('..');
 
-const db = Db.open('app.redb');           // or Db.openMemory()
+const db = Db.openMemory();
 const docs = db.collection('docs');
 
 docs.insert('p1', {
@@ -5354,34 +5742,73 @@ docs.insert('p1', {
   kind: 'doc',
   v: new Float32Array([1.0, 0.0]),
 });
+docs.insert('p2', {
+  title: 'python web frameworks',
+  kind: 'doc',
+  v: new Float32Array([0.0, 1.0]),
+});
+docs.insert('p3', {
+  title: 'rust again database',
+  kind: 'doc',
+  v: new Float32Array([0.9, 0.1]),
+});
 
-// hybrid retrieval: filter + vector + BM25, fused (RRF) + reranked (MMR)
+// kNN: the 3 nearest documents to (1, 0) under cosine.
 const rows = docs
   .query()
-  .filter(field('kind').eq('doc'))
-  .vector('v', new Float32Array([1.0, 0.0]), 10, 'cosine')
-  .text('title', 'rust database', 10)
-  .fuseRrf(60)
-  .rerankMmr(1.0)
-  .limit(5)
-  .run();                                  // [{ key, doc, score }]
+  .vector('v', new Float32Array([1.0, 0.0]), 3, 'cosine')
+  .run(); // [{ key, doc, score }]
 
-for (const { key, doc, score } of rows) console.log(key, score, doc.title);
+let rank = 0;
+for (const { key, doc, score } of rows) {
+  console.log(`${++rank}. ${key} score=${score.toFixed(6)} ${doc.title}`);
+}
 
-// predicates everywhere (queries and deletes)
-docs.deleteWhere(field('kind').eq('draft'));
-
-// scalar/compound/text/geo/vector indexes (incl. quantized + PQ + on-disk)
-docs.createVectorIndex('v', 'cosine');
-
-// TTL, graph, geo, schema, CAS, bulk-writes, dump/backup/compact …
 docs.close();
 db.close();
 ```
 
-TypeScript types ship in `index.d.ts`; every failure throws a `CorvidError`
-carrying the engine error `code` — the C ABI's frozen table, exported as
-`ErrorCode` (see [error codes](/reference/error-codes/)).
+<!-- corvid-examples:quickstart END -->
+
+### Hybrid retrieval
+
+<!-- corvid-examples:hybrid BEGIN -->
+
+```js
+const { Db, field } = require('..');
+
+const db = Db.openMemory();
+const docs = db.collection('docs');
+
+docs.insert('s1', { kind: 'doc', body: 'rust embedded database', v: new Float32Array([1.0, 0.0]) });
+docs.insert('s2', { kind: 'doc', body: 'python web frameworks', v: new Float32Array([0.0, 1.0]) });
+docs.insert('s3', { kind: 'doc', body: 'rust again database', v: new Float32Array([0.9, 0.1]) });
+docs.insert('m1', { kind: 'meta' }); // filtered out below
+
+// The flagship query: filter + vector + text, RRF + MMR + limit.
+const rows = docs
+  .query()
+  .filter(field('kind').eq('doc'))
+  .vector('v', new Float32Array([1.0, 0.0]), 2, 'cosine')
+  .text('body', 'rust database', 2)
+  .fuseRrf(60)
+  .rerankMmr(1.0)
+  .limit(2)
+  .run(); // [{ key, doc, score }]
+
+let rank = 0;
+for (const { key, doc, score } of rows) {
+  console.log(`${++rank}. ${key} score=${score.toFixed(6)} ${doc.body}`);
+}
+
+docs.close();
+db.close();
+```
+
+<!-- corvid-examples:hybrid END -->
+
+The fused scores are RRF rank sums: `s1` is rank 1 of both sources
+(1/61 + 1/61 = 2/61 ≈ 0.032787), `s3` rank 2 of both (2/62 ≈ 0.032258).
 
 ## Value mapping
 
@@ -5403,8 +5830,9 @@ their f32 bits). Keys are strings (UTF-8) or Buffers.
 
 The binding replays the engine's **golden suite** — the same 256-line
 fixture files the C ABI smoke harness runs — against its public API on every
-CI run (`test/golden.spec.ts`). The plan (architecture ruling, OOP surface,
-value contract, follow-ups) lives in the repo.
+CI run (`test/golden.spec.ts`), then executes the six-example tour. The plan
+(architecture ruling, OOP surface, value contract, follow-ups) lives in the
+repo.
 
 ## Development
 
@@ -5412,10 +5840,180 @@ value contract, follow-ups) lives in the repo.
 npm install                 # @napi-rs/cli + vitest
 npm run build               # build the native binary for this platform
 npm test                    # the golden suite (256 lines)
+node examples/hybrid.js     # the examples tour
 npm run lint                # cargo fmt --check + clippy -D warnings
 ```
 
-Next: the [reference section](/reference/constructs/).
+Next: [corvid-python](/bindings/corvid-python/).
+
+
+================================================================================
+# corvid-python
+# /docs/bindings/corvid-python/
+================================================================================
+
+[`corvid-python`](https://github.com/corvid-db/corvid-python) is the Python
+binding: the engine compiled in (a Rust pyo3 crate pinned to an exact corvid
+release tag), exposed as idiomatic **synchronous OOP** — `Db`,
+`Collection`, a fluent `Query` builder, and `field()` predicates. No SQL,
+no JSON, no serialization on the data path; values map natively
+(`array('f')` is the vector type; floats round-trip with f64 bits
+preserved exactly — no JS-style NaN caveats).
+
+**When to choose this binding:** your workload lives in Python — data
+pipelines, notebooks, model-serving sidecars, scripts — and you want an
+embedded vector + text + graph + geo store with zero servers and zero
+serialization. Handles are context managers (`with Db(...) as db:`),
+cursors are Python iterables, and every failure raises a typed
+`CorvidError` carrying the engine's frozen error `code`. For other
+languages see the [bindings overview](/bindings/overview/).
+
+## Install
+
+**Pending first publish** — the package is not on PyPI yet; everything is
+prepared (maturin wheel config, one abi3 wheel per platform), and
+publishing waits on the first release tag. Until then build from source —
+Python ≥ 3.11, Rust ≥ 1.88, and a C toolchain:
+
+```sh
+pip install maturin
+maturin develop --release    # into the active venv
+```
+
+The wheel is abi3 (cp311), so one wheel per platform covers every
+Python ≥ 3.11. Planned platform matrix: `linux-x64` / `linux-arm64` /
+`macos-arm64` / `windows-x64`.
+
+## The examples
+
+Six runnable programs in the repo's `examples/` directory, executed on
+every CI leg with deterministic output: **quickstart**, **hybrid** (the
+flagship below), **vector-index** (in-memory / on-disk / binary-quantized
+HNSW vs the exact scan), **text-search** (BM25 incl. CJK bigram
+segmentation), **graph** (neighbors/traverse + delete cascade), and
+**geo** (radius / bbox / nearest). The quickstart and hybrid sources are
+embedded below — imported from the repo so they cannot drift from what CI
+executes (`scripts/sync-binding-examples.sh`; the drift gate reddens docs
+CI if they diverge). Run them from a checkout with
+`maturin develop && python examples/hybrid.py`.
+
+### Quickstart
+
+<!-- corvid-examples:quickstart BEGIN -->
+
+```python
+from array import array
+
+from corvid import Db
+
+with Db.open_memory() as db:
+    docs = db.collection("docs")
+
+    docs.insert("p1", {"title": "rust embedded database", "kind": "doc",
+                       "v": array("f", [1.0, 0.0])})
+    docs.insert("p2", {"title": "python web frameworks", "kind": "doc",
+                       "v": array("f", [0.0, 1.0])})
+    docs.insert("p3", {"title": "rust again database", "kind": "doc",
+                       "v": array("f", [0.9, 0.1])})
+
+    # kNN: the 3 nearest documents to (1, 0) under cosine.
+    rows = (
+        docs.query()
+        .vector("v", array("f", [1.0, 0.0]), 3, "cosine")
+        .run()
+    )  # [Row(key, score, document), ...]
+
+    for rank, row in enumerate(rows, start=1):
+        print(f"{rank}. {row.key} score={row.score:.6f} "
+              f"{row.document['title']}")
+
+    docs.close()
+```
+
+<!-- corvid-examples:quickstart END -->
+
+### Hybrid retrieval
+
+<!-- corvid-examples:hybrid BEGIN -->
+
+```python
+from array import array
+
+from corvid import Db, field
+
+with Db.open_memory() as db:
+    docs = db.collection("docs")
+
+    docs.insert("s1", {"kind": "doc", "body": "rust embedded database",
+                       "v": array("f", [1.0, 0.0])})
+    docs.insert("s2", {"kind": "doc", "body": "python web frameworks",
+                       "v": array("f", [0.0, 1.0])})
+    docs.insert("s3", {"kind": "doc", "body": "rust again database",
+                       "v": array("f", [0.9, 0.1])})
+    docs.insert("m1", {"kind": "meta"})  # filtered out below
+
+    # The flagship query: filter + vector + text, RRF + MMR + limit.
+    rows = (
+        docs.query()
+        .filter(field("kind").eq("doc"))
+        .vector("v", array("f", [1.0, 0.0]), 2, "cosine")
+        .text("body", "rust database", 2)
+        .fuse_rrf(60)
+        .rerank_mmr(1.0)
+        .limit(2)
+        .run()
+    )  # [Row(key, score, document), ...]
+
+    for rank, row in enumerate(rows, start=1):
+        print(f"{rank}. {row.key} score={row.score:.6f} "
+              f"{row.document['body']}")
+
+    docs.close()
+```
+
+<!-- corvid-examples:hybrid END -->
+
+The fused scores are RRF rank sums: `s1` is rank 1 of both sources
+(1/61 + 1/61 = 2/61 ≈ 0.032787), `s3` rank 2 of both (2/62 ≈ 0.032258).
+
+## Value mapping
+
+| Python | engine |
+|---|---|
+| `None`, `bool`, `str` | Null / Bool / Text |
+| `int` | Int (full i64 — out-of-range ints raise code 12) |
+| `float` | Float |
+| `bytes` / `bytearray` | Bytes |
+| `array('f')` | Vector (other typecodes are rejected) |
+| `list` / `tuple` | Array |
+| `dict` (str keys) | Map |
+
+Reading back: Int → `int` (arbitrary precision — no ±2^53 boundary, unlike
+the JS binding's number/BigInt split); Float → `float` with **f64 bits
+preserved exactly** — NaN payloads, `-0.0`, and `±inf` all round-trip
+bit-exactly. Vector → `array('f')` (f32-exact both directions), Map →
+`dict` in the engine's key order. Keys are `str` (UTF-8) or `bytes`.
+
+## Correctness story
+
+The binding replays the engine's **golden suite** — the same 256-line
+fixture files the C ABI smoke harness runs — against its public API on every
+CI run (`tests/test_golden.py`), then executes the six-example tour. Type
+stubs ship in-package (`py.typed`); the plan (architecture ruling, OOP
+surface, value contract) lives in the repo.
+
+## Development
+
+```sh
+python -m venv .venv && source .venv/bin/activate
+pip install maturin pytest
+maturin develop               # build the native extension
+pytest tests                  # the golden suite (256 fixture lines)
+python examples/hybrid.py     # the examples tour
+cargo fmt --check             # + cargo clippy --all-targets -- -D warnings
+```
+
+Next: [corvid-go](/bindings/corvid-go/).
 
 
 ================================================================================
@@ -5430,13 +6028,23 @@ native exceptions, destructors map to the dispose pattern — and are
 **synchronous** in v1 (the engine is sync). No FFI symbols leak into a
 binding's public API.
 
-## Shipped
+## Live
 
 | Binding | Language | Status |
 |---|---|---|
-| [corvid-node](/bindings/corvid-node/) | Node.js (native) | shipped — npm `corvid-node`, prebuilt binaries, golden-suite CI |
-| [corvid-c](/bindings/corvid-c/) | C (reference consumer) | shipped — release-artifact conformance, golden suite port |
+| [corvid-c](/bindings/corvid-c/) | C (reference consumer) | live — release-artifact conformance, golden suite port, six-example tour as ctests |
+| [corvid-node](/bindings/corvid-node/) | Node.js (native, engine compiled in) | live — golden-suite CI + examples tour; npm publish pending first release |
+| [corvid-python](/bindings/corvid-python/) | Python (native, engine compiled in) | live — golden-suite CI + examples tour; PyPI publish pending first release |
+| [corvid-go](/bindings/corvid-go/) | Go (cgo over the published cdylib) | live — golden-suite CI + examples tour, no Rust toolchain required |
 | corvid (Rust) | Rust | the engine itself; native API |
+
+Every live binding ships the same **examples tour** — six runnable
+programs per language (quickstart, hybrid RRF+MMR, vector-index families,
+text search incl. CJK, graph with delete cascade, geo), executed on
+every CI leg with deterministic output. The quickstart and hybrid
+sources are imported into each binding page here
+(`scripts/sync-binding-examples.sh`; CI diffs against the binding repos'
+master so they cannot drift).
 
 ## Planned bindings
 
@@ -5446,27 +6054,26 @@ One planned-scope line each:
 
 | Binding | Planned scope |
 |---|---|
-| **corvid-go** | cgo bindings exposing `DB`, `Collection`, `Query` structs with Go-native errors; gofr-style module wrapping the cdylib artifacts, golden-suite port in `go test`. |
 | **corvid-js** (wasm) | the engine compiled to `wasm32-unknown-unknown` behind a Worker-RPC surface; in-memory first, OPFS persistence when the engine's browser VFS lands. |
 | **corvid-jvm** | JNI bindings for Java/Kotlin with `AutoCloseable` handles; cursor iterators as `java.util.Iterator`; gradle-consumed artifacts per platform. |
 | **corvid-dart** | Flutter/Dart FFI bindings with `Finalizable` handles — mobile-first (the engine already cross-compiles for aarch64 iOS/Android). |
 | **corvid-php** | PHP extension (FFI or native) with one handle per request/thread (ZTS posture per the ABI threading rules). |
-| **corvid-python** | CPython extension (or PyO3-wrapped cdylib) exposing `corvid.Db` with context-manager lifetimes and `Iterator` cursors; wheels per platform. |
 | **corvid-cpp** | RAII header-only wrapper over `corvid.h` — unique_ptr handles, ranges-compatible cursors, exceptions mapped from `corvid_err`. |
 | **corvid-zig** | `extern` declarations generated from the ABI surface with Zig error-union returns and defer-friendly deinitializers. |
 | **corvid-rust** (crates.io) | the engine itself, published to crates.io as `corvid` — replacing the git dependency (see [install](/start/install/)). |
 
-Planned means planned: none of the above exist yet; this page is the
-ecosystem index the project is executing against. Each will get its own
+Planned means planned: none of the above exist yet. Each will get its own
 documentation section here when it ships.
 
 ## The correctness floor
 
 Every binding replays the engine's **golden fixtures** — the 256-line
 fixture suite the C ABI smoke harness runs — against its public API on every
-CI run. corvid-c ports the fixtures in C; corvid-node replays them through
-TypeScript. A binding that cannot pass the golden suite is not shippable;
-that is the program's bar.
+CI run. corvid-c ports the fixtures in C; corvid-node and corvid-python
+replay them through TypeScript and pytest; corvid-go drives them through
+`go test`. On top of the golden suite, every binding's CI executes its
+examples tour. A binding that cannot pass the golden suite is not
+shippable; that is the program's bar.
 
 Next: [corvid-c](/bindings/corvid-c/).
 
