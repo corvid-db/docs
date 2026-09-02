@@ -40,7 +40,7 @@ stick to the wrapper types.
 From the pinned release artifacts:
 
 ```sh
-./fetch.sh         # fetch + sha256-verify corvid v0.3.1 into deps/current
+./fetch.sh         # fetch + sha256-verify corvid v0.3.2 into deps/current
 zig build test     # wrapper unit tests + the golden suite (267 lines)
 ```
 

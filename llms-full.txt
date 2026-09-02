@@ -5311,7 +5311,7 @@ Requirements: a C11 compiler, CMake ≥ 3.28, `curl` + `shasum`/`sha256sum`
 (macOS/Linux) or PowerShell 5+ (Windows).
 
 ```sh
-./fetch.sh                     # download + verify corvid v0.3.1 into deps/
+./fetch.sh                     # download + verify corvid v0.3.2 into deps/
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build --output-on-failure   # golden suite + demo + examples
@@ -5510,7 +5510,7 @@ pkg-config --cflags --libs corvid
 ## Versioning
 
 The engine pin lives in one variable in the fetch scripts
-(`CORVID_VERSION=v0.3.1`). Artifacts are always taken from that exact tag's
+(`CORVID_VERSION=v0.3.2`). Artifacts are always taken from that exact tag's
 GitHub release and sha256-verified; `deps/` is never committed.
 
 ## The macOS note (a bindings-program war story)
@@ -5518,7 +5518,7 @@ GitHub release and sha256-verified; `deps/` is never committed.
 The v0.2.0 darwin dylibs shipped with the release CI runner's absolute path
 as their install name, so binaries linked against them aborted at launch.
 corvid-c caught this (finding F1 in its plan); the engine fixed its release
-pipeline; **every pin since v0.2.1 — the current is v0.3.1 — is clean**:
+pipeline; **every pin since v0.2.1 — the current is v0.3.2 — is clean**:
 `otool -D` shows
 `@rpath/libcorvid.dylib`, and the golden suite runs 267/267 with no
 workarounds. v0.2.1's Linux `.so` also gained its SONAME (finding F2,
@@ -5537,7 +5537,7 @@ binding: a **header-first RAII library** over the frozen C ABI (one
 public header, `corvid/corvid.hpp`, plus one implementation TU), linking
 the **published FFI artifacts** — the platform cdylib, the generated
 header, and the golden fixtures — downloaded from a pinned engine
-release (v0.3.1) and sha256-verified. No engine checkout, no Rust
+release (v0.3.2) and sha256-verified. No engine checkout, no Rust
 toolchain, no dependencies beyond the C++ standard library.
 
 **When to choose this binding:** you are writing modern C++ (C++20
@@ -5563,7 +5563,7 @@ PowerShell):
 
 ```sh
 git clone https://github.com/corvid-db/corvid-cpp && cd corvid-cpp
-./fetch.sh          # download + sha256-verify corvid v0.3.1 into deps/
+./fetch.sh          # download + sha256-verify corvid v0.3.2 into deps/
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build --output-on-failure
@@ -5718,7 +5718,7 @@ The fused scores are RRF rank sums: `s1` is rank 1 of both sources
 Every binding replays the engine's golden fixtures; corvid-cpp ports
 the C harness itself to C++ (`test/golden.cpp`) and drives the
 **downloaded** cdylib over the release's fixtures — 267 executable
-lines at v0.3.1 (byte-identical with v0.3.0's), including the additive
+lines at v0.3.2 (byte-identical with v0.3.0's — unchanged through v0.3.2), including the additive
 map-keys and phrase ops. If the
 published `.so`/`.dylib`/`.dll`, header, or fixtures disagree, that CI
 leg reddens where the engine's own suite stayed green. On top of the
@@ -5775,7 +5775,7 @@ The raw ffigen layer stays importable as `package:corvid_dart/src/...`
 From the pinned release artifacts:
 
 ```sh
-./fetch.sh                     # fetch + sha256-verify corvid v0.3.1 into deps/current
+./fetch.sh                     # fetch + sha256-verify corvid v0.3.2 into deps/current
 dart pub get
 dart test                      # the golden suite (267 lines) + supplemental contracts
 dart run examples/quickstart.dart
@@ -5971,7 +5971,7 @@ binary links at runtime.
 From the pinned release artifacts (default):
 
 ```sh
-make deps          # fetch + verify corvid v0.3.1 into deps/current
+make deps          # fetch + verify corvid v0.3.2 into deps/current
 go test ./...      # the golden suite (267 fixture lines)
 ```
 
@@ -6393,7 +6393,7 @@ From source (Maven Central publish pending — it rides the engine's
 release cadence; see the repo README):
 
 ```sh
-./fetch.sh                    # fetch + sha256-verify corvid v0.3.1
+./fetch.sh                    # fetch + sha256-verify corvid v0.3.2
 ./scripts/build-native.sh     # compile the JNI shim into build/native
 ./gradlew test                # the golden suite (267 executable lines)
 ./gradlew examples            # the six-example tour
@@ -6771,7 +6771,7 @@ NaN / ±INF / -0.0 cross bit-exact.
 From the pinned release artifacts:
 
 ```sh
-./fetch.sh                    # fetch + sha256-verify corvid v0.3.1 into deps/current
+./fetch.sh                    # fetch + sha256-verify corvid v0.3.2 into deps/current
 ./scripts/build-ext.sh        # phpize + configure + make (needs PHP 8.3+ dev headers)
 php -d extension=ext/corvid/modules/corvid.so examples/quickstart.php
 ```
@@ -7137,7 +7137,7 @@ stick to the wrapper types.
 From the pinned release artifacts:
 
 ```sh
-./fetch.sh         # fetch + sha256-verify corvid v0.3.1 into deps/current
+./fetch.sh         # fetch + sha256-verify corvid v0.3.2 into deps/current
 zig build test     # wrapper unit tests + the golden suite (267 lines)
 ```
 
