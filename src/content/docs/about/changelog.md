@@ -1,6 +1,6 @@
 ---
 title: Changelog highlights
-description: Release highlights for corvid and its ecosystem — v0.1.0, v0.1.1, v0.2.0, v0.2.1, v0.3.0, v0.3.1 — inlined here, self-contained.
+description: Release highlights for corvid and its ecosystem — v0.1.0, v0.1.1, v0.2.0, v0.2.1, v0.3.0, v0.3.1, v0.3.2 — inlined here, self-contained.
 sidebar:
   order: 1
 ---
@@ -11,6 +11,27 @@ at release time from the engine repository's
 provenance only; everything you need to evaluate a release is here). Until
 1.0, the API and on-disk format change without backward-compatibility
 guarantees; format changes migrate via [dump/load](/admin/dump-load/).
+
+## v0.3.2 (2026-09)
+
+**Fix: `corvid_page`'s zero-length cursor is the exclusive continuation**
+(docs/FFI.md §4.9 erratum, found by the corvid-zig acceptance round). §4.9
+had said "`after == NULL || after_len == 0` starts at the beginning" —
+but the legal empty key `b""` sorts first, so a page boundary landing on
+it returns a zero-length resume cursor, and feeding that back under the
+old FFI fold RESTARTED the walk (an infinite re-walk; the alternative —
+reading the empty cursor as end — silently truncates). Now `after == NULL`
+is the only start form (it begins AT `b""`), and a non-NULL `after` of
+any length — including 0 — is the cursor: strictly after those bytes.
+Behavioral only for collections containing the empty key at a page
+boundary; bit-identical for everything else. No signature, symbol, or
+enum moved; `FFI_VERSION` and the soname stay at 1. The engine's
+`page_inner` was always correct — only the FFI fold and the spec wording
+were wrong. Also riding this tag: the engine crate's package name is
+`corvid-db` on crates.io (the compiled ident stays `corvid`, so every
+`use corvid::…` keeps compiling; bindings rename their git dependency
+KEY at this pin bump). corvid-zig flips its zero-length-cursor test from
+the restart shape to the exclusive continuation at this pin.
 
 ## v0.3.1 (2026-09)
 
