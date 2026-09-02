@@ -7,7 +7,9 @@ sidebar:
 
 corvid is a Rust library. Today it is consumed three ways:
 
-1. **From Rust** — a git dependency (crates.io publication is planned; see
+1. **From Rust** — a git dependency today; the engine will also be on
+   crates.io as `corvid-db` once published (pending first publish):
+   `corvid-db = "0.3"` with the same `use corvid::…` ident (see
    [bindings roadmap](/bindings/overview/)).
 2. **From C or any C-FFI language** — the release artifacts of the engine:
    the `corvid` cdylib plus the generated `corvid.h`, attached to every
@@ -16,6 +18,11 @@ corvid is a Rust library. Today it is consumed three ways:
    npm package with prebuilt binaries.
 
 ## Rust (git dependency)
+
+> Once the engine is published, the crates.io line will be
+> `corvid-db = "0.3"` (the package is `corvid-db`; the crate ident stays
+> `corvid`, so code keeps saying `use corvid::…`). Until then — and for
+> pinned, reproducible builds — use the git dependency:
 
 ```toml
 [dependencies]
