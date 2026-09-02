@@ -1,6 +1,6 @@
 ---
 title: corvid-cpp
-description: The corvid-cpp binding — a header-first RAII library over the published C ABI, move-only handles, Value from initializer lists, map_keys and phrase search at engine v0.3.0, exceptions with frozen error codes, the quickstart and hybrid examples, and the golden-suite correctness story.
+description: The corvid-cpp binding — a header-first RAII library over the published C ABI, move-only handles, Value from initializer lists, map_keys and phrase search at engine v0.3.1, exceptions with frozen error codes, the quickstart and hybrid examples, and the golden-suite correctness story.
 sidebar:
   order: 6
 ---
@@ -10,7 +10,7 @@ binding: a **header-first RAII library** over the frozen C ABI (one
 public header, `corvid/corvid.hpp`, plus one implementation TU), linking
 the **published FFI artifacts** — the platform cdylib, the generated
 header, and the golden fixtures — downloaded from a pinned engine
-release (v0.3.0) and sha256-verified. No engine checkout, no Rust
+release (v0.3.1) and sha256-verified. No engine checkout, no Rust
 toolchain, no dependencies beyond the C++ standard library.
 
 **When to choose this binding:** you are writing modern C++ (C++20
@@ -36,7 +36,7 @@ PowerShell):
 
 ```sh
 git clone https://github.com/corvid-db/corvid-cpp && cd corvid-cpp
-./fetch.sh          # download + sha256-verify corvid v0.3.0 into deps/
+./fetch.sh          # download + sha256-verify corvid v0.3.1 into deps/
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build --output-on-failure
@@ -191,7 +191,8 @@ The fused scores are RRF rank sums: `s1` is rank 1 of both sources
 Every binding replays the engine's golden fixtures; corvid-cpp ports
 the C harness itself to C++ (`test/golden.cpp`) and drives the
 **downloaded** cdylib over the release's fixtures — 267 executable
-lines at v0.3.0, including the additive map-keys and phrase ops. If the
+lines at v0.3.1 (byte-identical with v0.3.0's), including the additive
+map-keys and phrase ops. If the
 published `.so`/`.dylib`/`.dll`, header, or fixtures disagree, that CI
 leg reddens where the engine's own suite stayed green. On top of the
 golden port, `test/raii.cpp` exercises the wrapper's own surface (145

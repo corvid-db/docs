@@ -38,7 +38,7 @@ Requirements: a C11 compiler, CMake ≥ 3.28, `curl` + `shasum`/`sha256sum`
 (macOS/Linux) or PowerShell 5+ (Windows).
 
 ```sh
-./fetch.sh                     # download + verify corvid v0.3.0 into deps/
+./fetch.sh                     # download + verify corvid v0.3.1 into deps/
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build --output-on-failure   # golden suite + demo + examples
@@ -237,7 +237,7 @@ pkg-config --cflags --libs corvid
 ## Versioning
 
 The engine pin lives in one variable in the fetch scripts
-(`CORVID_VERSION=v0.3.0`). Artifacts are always taken from that exact tag's
+(`CORVID_VERSION=v0.3.1`). Artifacts are always taken from that exact tag's
 GitHub release and sha256-verified; `deps/` is never committed.
 
 ## The macOS note (a bindings-program war story)
@@ -245,7 +245,7 @@ GitHub release and sha256-verified; `deps/` is never committed.
 The v0.2.0 darwin dylibs shipped with the release CI runner's absolute path
 as their install name, so binaries linked against them aborted at launch.
 corvid-c caught this (finding F1 in its plan); the engine fixed its release
-pipeline; **every pin since v0.2.1 — the current is v0.3.0 — is clean**:
+pipeline; **every pin since v0.2.1 — the current is v0.3.1 — is clean**:
 `otool -D` shows
 `@rpath/libcorvid.dylib`, and the golden suite runs 267/267 with no
 workarounds. v0.2.1's Linux `.so` also gained its SONAME (finding F2,
