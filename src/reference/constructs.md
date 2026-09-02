@@ -6,13 +6,13 @@ sidebar:
 ---
 
 <!-- GENERATED FILE — do not edit by hand. Source: the engine's
-     docs/SYNTAX.md at tag v0.3.1, itself generated from the conformance
+     docs/SYNTAX.md at tag v0.3.2, itself generated from the conformance
      surface manifests (crates/corvid/tests/surface/mod.rs and
      crates/corvid-mcp/tests/surface/mod.rs). Regenerate with
-     scripts/sync-from-engine.sh v0.3.1 — CI verifies the committed copy
+     scripts/sync-from-engine.sh v0.3.2 — CI verifies the committed copy
      matches the pinned tag (see .engine-pin). -->
 
-> **generated — synced from the engine at v0.3.1.** This page lists the
+> **generated — synced from the engine at v0.3.2.** This page lists the
 > complete writable surface of `corvid` and `corvid-mcp`: every public
 > construct grouped by statement class (the SQL analogue is a guide, not a
 > promise), each with the integration tests that pin its

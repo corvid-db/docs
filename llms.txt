@@ -125,6 +125,6 @@
 
 ## About
 
-- [Changelog highlights](/docs/about/changelog/): Release highlights for corvid and its ecosystem — v0.1.0, v0.1.1, v0.2.0, v0.2.1, v0.3.0, v0.3.1 — inlined here, self-contained.
+- [Changelog highlights](/docs/about/changelog/): Release highlights for corvid and its ecosystem — v0.1.0, v0.1.1, v0.2.0, v0.2.1, v0.3.0, v0.3.1, v0.3.2 — inlined here, self-contained.
 - [About these docs](/docs/about/): How corvid's documentation works — the current/snapshot versioning mechanism, the generated-class pages synced from the engine, AI-friendly endpoints (llms.txt, markdown sources), and how to contribute.
 

@@ -28,7 +28,13 @@ corvid_status corvid_page(corvid_coll *c, const uint8_t *after, size_t after_len
                           uint8_t **next_after_out, size_t *next_after_len_out);
 ```
 Keyset pagination: up to `limit` documents in key order strictly after
-`after` (NULL/empty starts at the beginning), from one MVCC snapshot.
+`after`, from one MVCC snapshot. `after == NULL` is the ONLY start form —
+it begins at the very first key, the legal empty key `b""` included; a
+non-NULL `after` of ANY length — including 0 — is the exclusive
+continuation cursor (strictly after those bytes), so a page boundary
+landing on `b""` hands back a zero-length cursor that, fed back,
+continues the walk instead of restarting it (v0.3.2's §4.9 erratum; a
+fresh start must pass NULL, never an empty non-NULL buffer).
 `*rows_out` is an owned rows cursor (score 0.0). `*next_after_out` is the
 resume cursor — **free it with `corvid_free`** — or NULL with length 0 at
 the end. `limit == 0` returns empty rows and no cursor. (Filtered
