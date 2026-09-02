@@ -1,6 +1,6 @@
 ---
 title: corvid-js
-description: The corvid-js browser/Worker binding — the engine compiled to WebAssembly behind wasm-bindgen typed exports: synchronous in-memory OOP (Db/Collection/Query) plus async OPFS persistence (openOpfs/AsyncDb) in a dedicated Worker, the JS value mapping, the quickstart and hybrid examples, and the golden-suite correctness story (267/267 in real Chromium).
+description: The corvid-js browser/Worker binding — the engine compiled to WebAssembly behind wasm-bindgen typed exports, with a synchronous in-memory surface (Db/Collection/Query) plus async OPFS persistence (openOpfs/AsyncDb) in a dedicated Worker, the JS value mapping, the quickstart and hybrid examples, and the golden-suite correctness story (267/267 in real Chromium).
 sidebar:
   order: 5
 ---
