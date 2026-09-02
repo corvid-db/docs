@@ -1,6 +1,6 @@
 ---
 title: corvid-go
-description: The corvid-go binding — cgo over the published FFI artifacts, Db/Collection/Query with Go errors, the Go value mapping and the v0.2.1 map-key boundary, the quickstart and hybrid examples, and the golden-suite correctness story.
+description: The corvid-go binding — cgo over the published FFI artifacts, Db/Collection/Query with Go errors, the Go value mapping and the v0.3.0 map-key collapse, the quickstart and hybrid examples, and the golden-suite correctness story.
 sidebar:
  order: 4
 ---
@@ -25,8 +25,8 @@ binary links at runtime.
 From the pinned release artifacts (default):
 
 ```sh
-make deps          # fetch + verify corvid v0.2.1 into deps/current
-go test ./...      # the golden suite (256 fixture lines)
+make deps          # fetch + verify corvid v0.3.0 into deps/current
+go test ./...      # the golden suite (267 fixture lines)
 ```
 
 Requirements: Go ≥ 1.26, a C compiler (CGO enabled — the default when one
@@ -34,21 +34,25 @@ is present), `curl` + `shasum`/`sha256sum`. Or, if corvid is installed as
 a system library, point cgo at it with `CGO_CFLAGS` / `CGO_LDFLAGS` (see
 the repo README).
 
-## The v0.2.1 map-key boundary
+## Documents, maps, and phrases
 
-The v0.2.1 C ABI has **no map-key iterator** — a stored map is readable
-only by known key. Consequences in this binding (either-correct-or-loud):
+Engine v0.3.0 added the map-key iterator (`corvid_value_map_keys`) and the
+direct positional phrase search (`corvid_phrase_search`) to the C ABI:
 
-- `Get`/`Scan`/`Page` decode map documents through a candidate-key set fed
-  by everything written through the binding; a map with unknown keys fails
-  wrapping `corvid.ErrMapKeyEnumeration` rather than guessing.
-- `GetFields(key, fields...)` and `Query.Select(fields...)` (projection —
-  the only shape in which `Run` materializes `Row.Doc`) never need the
-  oracle and work on any database. Without `Select`, `Row.Doc` is nil:
-  carry the key, read the document explicitly.
-
-The upstream `corvid_value_map_keys` ABI append will collapse this into a
-plain decode.
+- **Map decoding is complete, everywhere.** The v0.2.x-era boundary — a
+  candidate-key oracle that failed `Get` with `ErrMapKeyEnumeration` on
+  unknown keys — collapsed into a plain decode through the real iterator:
+  `Get`/`Scan`/`Page`/query rows decode every document the engine can
+  read, on any database, whatever wrote it (UTF-8 and nested keys
+  included).
+- Retrieval queries still return `Row.Doc == nil` without
+  `Query.Select(...)` — keys and scores by design; read the document
+  explicitly, or use `PhraseSearch` (whose rows always carry documents).
+- `(*Collection).PhraseSearch(field, phrase, k)` is the DIRECT positional
+  search: consecutive, in-order analyzed tokens, stop words collapsing
+  out of adjacency, rows carrying the BM25 phrase score (the phrase
+  scale, not the builder's fused RRF scale); `k == 0` answers empty —
+  inert, never an error.
 
 ## The examples
 
@@ -56,7 +60,7 @@ Six runnable programs under the repo's `examples/` directory (`go run
 ./examples/<name>`), executed on every CI leg with deterministic output:
 **quickstart**, **hybrid** (the flagship below), **vector-index**
 (in-memory / on-disk / binary-quantized HNSW vs the exact scan),
-**text-search** (BM25 incl. CJK bigram segmentation), **graph**
+**text-search** (BM25 incl. CJK bigram segmentation, plus the v0.3.0 direct `PhraseSearch`), **graph**
 (neighbors/traverse + delete cascade), and **geo** (radius / bbox /
 nearest). The quickstart and hybrid sources are embedded below — imported
 from the repo so they cannot drift from what CI executes
@@ -95,8 +99,8 @@ func main() {
 	}))
 
 	// kNN: the 3 nearest documents to (1, 0) under cosine. Row.Doc is
-	// materialized only under Select (the v0.2.1 ABI has no map-key
-	// iterator) — select the field the printout needs.
+	// materialized only under Select — retrieval rows carry keys and
+	// scores, so select the field the printout needs.
 	rows, err := docs.Query().
 		Vector("v", []float32{1.0, 0.0}, 3, corvid.MetricCosine).
 		Select("title").
@@ -186,7 +190,7 @@ runtime finalizers as backstops only.
 
 ## Correctness story
 
-The binding replays the engine's **golden suite** — the same 256-line
+The binding replays the engine's **golden suite** — the same 267-line
 fixture files the C ABI smoke harness runs, vendored byte-identical and
 verified against each release — through its public API on every CI run
 (`golden_test.go`), then executes the six-example tour under `go run`

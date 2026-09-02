@@ -43,7 +43,8 @@ Six runnable programs in the repo's `examples/` directory, executed on
 every CI leg with deterministic output: **quickstart**, **hybrid** (the
 flagship below), **vector-index** (in-memory / on-disk / binary-quantized
 HNSW vs the exact scan), **text-search** (BM25 incl. CJK bigram
-segmentation), **graph** (neighbors/traverse + delete cascade), and
+segmentation, plus the v0.3.0 direct `phrase_search()`), **graph**
+(neighbors/traverse + delete cascade), and
 **geo** (radius / bbox / nearest). The quickstart and hybrid sources are
 embedded below — imported from the repo so they cannot drift from what CI
 executes (`scripts/sync-binding-examples.sh`; the drift gate reddens docs
@@ -149,7 +150,7 @@ bit-exactly. Vector → `array('f')` (f32-exact both directions), Map →
 
 ## Correctness story
 
-The binding replays the engine's **golden suite** — the same 256-line
+The binding replays the engine's **golden suite** — the same 267-line
 fixture files the C ABI smoke harness runs — against its public API on every
 CI run (`tests/test_golden.py`), then executes the six-example tour. Type
 stubs ship in-package (`py.typed`); the plan (architecture ruling, OOP
@@ -161,7 +162,7 @@ surface, value contract) lives in the repo.
 python -m venv .venv && source .venv/bin/activate
 pip install maturin pytest
 maturin develop               # build the native extension
-pytest tests                  # the golden suite (256 fixture lines)
+pytest tests                  # the golden suite (267 fixture lines)
 python examples/hybrid.py     # the examples tour
 cargo fmt --check             # + cargo clippy --all-targets -- -D warnings
 ```

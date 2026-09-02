@@ -30,7 +30,7 @@ published-artifact defects surface first.
 | `CMakeLists.txt` | Offline-first build consuming `deps/`; builds the demo, the examples tour, and the golden-suite port; installs a `corvid.pc` |
 | `examples/demo.c` | A small idiomatic consumer: open, insert, query, print (~20 symbols) |
 | `examples/{quickstart,hybrid,vector_index,text_search,graph,geo}.c` | The examples tour — one runnable program per concept, each a ctest on every CI leg |
-| `test/golden.c` | The golden-suite port — replays the engine's 256-line fixture suite against the downloaded libcorvid |
+| `test/golden.c` | The golden-suite port — replays the engine's 267-line fixture suite against the downloaded libcorvid |
 
 ## Quick start
 
@@ -38,7 +38,7 @@ Requirements: a C11 compiler, CMake ≥ 3.28, `curl` + `shasum`/`sha256sum`
 (macOS/Linux) or PowerShell 5+ (Windows).
 
 ```sh
-./fetch.sh                     # download + verify corvid v0.2.1 into deps/
+./fetch.sh                     # download + verify corvid v0.3.0 into deps/
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build --output-on-failure   # golden suite + demo + examples
@@ -54,7 +54,7 @@ Six runnable programs, each also a ctest (and each leak-clean under the
 CI sanitizer job): **quickstart** (open, insert, kNN, print), **hybrid**
 (filter + vector + BM25, RRF fusion, MMR rerank, limit), **vector_index**
 (in-memory / on-disk / binary-quantized HNSW vs the exact scan, plus a
-close/reopen), **text_search** (BM25, English + CJK), **graph**
+close/reopen), **text_search** (BM25, English + CJK, plus the v0.3.0 direct `corvid_phrase_search`), **graph**
 (neighbors/traverse + delete cascade), and **geo** (radius / bbox /
 nearest with haversine kilometres). The quickstart and hybrid sources
 are embedded below — imported from the repo's `examples/` so they cannot
@@ -237,7 +237,7 @@ pkg-config --cflags --libs corvid
 ## Versioning
 
 The engine pin lives in one variable in the fetch scripts
-(`CORVID_VERSION=v0.2.1`). Artifacts are always taken from that exact tag's
+(`CORVID_VERSION=v0.3.0`). Artifacts are always taken from that exact tag's
 GitHub release and sha256-verified; `deps/` is never committed.
 
 ## The macOS note (a bindings-program war story)
@@ -245,8 +245,9 @@ GitHub release and sha256-verified; `deps/` is never committed.
 The v0.2.0 darwin dylibs shipped with the release CI runner's absolute path
 as their install name, so binaries linked against them aborted at launch.
 corvid-c caught this (finding F1 in its plan); the engine fixed its release
-pipeline; **v0.2.1 — the current pin — is clean**: `otool -D` shows
-`@rpath/libcorvid.dylib`, and the golden suite runs 256/256 with no
+pipeline; **every pin since v0.2.1 — the current is v0.3.0 — is clean**:
+`otool -D` shows
+`@rpath/libcorvid.dylib`, and the golden suite runs 267/267 with no
 workarounds. v0.2.1's Linux `.so` also gained its SONAME (finding F2,
 likewise resolved). This is the reference-consumer role working as designed.
 

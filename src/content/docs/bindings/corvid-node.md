@@ -44,7 +44,8 @@ Six runnable programs in the repo's `examples/` directory, executed on
 every CI leg with deterministic output: **quickstart**, **hybrid** (the
 flagship below), **vector-index** (in-memory / on-disk / binary-quantized
 HNSW vs the exact scan), **text-search** (BM25 incl. CJK bigram
-segmentation), **graph** (neighbors/traverse + delete cascade), and
+segmentation, plus the v0.3.0 direct `phraseSearch()`), **graph**
+(neighbors/traverse + delete cascade), and
 **geo** (radius / bbox / nearest). The quickstart and hybrid sources are
 embedded below — imported from the repo so they cannot drift from what CI
 executes (`scripts/sync-binding-examples.sh`; the drift gate reddens docs
@@ -153,7 +154,7 @@ their f32 bits). Keys are strings (UTF-8) or Buffers.
 
 ## Correctness story
 
-The binding replays the engine's **golden suite** — the same 256-line
+The binding replays the engine's **golden suite** — the same 267-line
 fixture files the C ABI smoke harness runs — against its public API on every
 CI run (`test/golden.spec.ts`), then executes the six-example tour. The plan
 (architecture ruling, OOP surface, value contract, follow-ups) lives in the
@@ -164,7 +165,7 @@ repo.
 ```sh
 npm install                 # @napi-rs/cli + vitest
 npm run build               # build the native binary for this platform
-npm test                    # the golden suite (256 lines)
+npm test                    # the golden suite (267 lines)
 node examples/hybrid.js     # the examples tour
 npm run lint                # cargo fmt --check + clippy -D warnings
 ```
