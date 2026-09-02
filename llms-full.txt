@@ -6170,8 +6170,12 @@ at bootstrap, budget-gated at 1 MB in CI); every call is synchronous.
 
 **The persistence boundary, stated plainly: a `Db` is in-memory per
 session.** wasm has no filesystem, so nothing survives a page reload
-today — OPFS-backed persistence is a *decided, trigger-based* future
-addition (the repo's plan §5). Everything else the engine does — every
+today — OPFS-backed persistence is a *decided* addition whose
+implementation program is now underway (the binding contract:
+`docs/OPFS-SPEC.md` in the corvid-js repo; a Worker-hosted engine over
+an OPFS storage backend, with an async `openOpfs()` API alongside the
+sync in-memory surface). This page documents the shipped in-memory
+behavior until that lands. Everything else the engine does — every
 index family, schemas, TTL, graph, geo, hybrid queries — works and is
 pinned by the engine's golden fixtures.
 

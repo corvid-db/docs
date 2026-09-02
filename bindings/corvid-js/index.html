@@ -85,8 +85,12 @@ round-trip. The engine ships as one <code dir="auto">.wasm</code> artifact (~363
 at bootstrap, budget-gated at 1 MB in CI); every call is synchronous.</p>
 <p><strong>The persistence boundary, stated plainly: a <code dir="auto">Db</code> is in-memory per
 session.</strong> wasm has no filesystem, so nothing survives a page reload
-today — OPFS-backed persistence is a <em>decided, trigger-based</em> future
-addition (the repo’s plan §5). Everything else the engine does — every
+today — OPFS-backed persistence is a <em>decided</em> addition whose
+implementation program is now underway (the binding contract:
+<code dir="auto">docs/OPFS-SPEC.md</code> in the corvid-js repo; a Worker-hosted engine over
+an OPFS storage backend, with an async <code dir="auto">openOpfs()</code> API alongside the
+sync in-memory surface). This page documents the shipped in-memory
+behavior until that lands. Everything else the engine does — every
 index family, schemas, TTL, graph, geo, hybrid queries — works and is
 pinned by the engine’s golden fixtures.</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="install">Install</h2><a class="sl-anchor-link" href="#install"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Install”</span></a></div>
