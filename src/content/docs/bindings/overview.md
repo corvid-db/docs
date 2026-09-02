@@ -1,6 +1,6 @@
 ---
 title: Bindings ecosystem
-description: Language bindings for corvid — seven live (corvid-c reference consumer, corvid-node, corvid-python, corvid-go, corvid-js in the browser via WebAssembly, corvid-cpp with RAII over the C ABI, and corvid-zig over the C ABI with Zig error unions, each with a runnable six-example tour) and the planned ecosystem index (jvm, dart, php, rust on crates.io).
+description: Language bindings for corvid — eight live (corvid-c reference consumer, corvid-node, corvid-python, corvid-go, corvid-js in the browser via WebAssembly, corvid-cpp with RAII over the C ABI, corvid-zig over the C ABI with Zig error unions, and corvid-dart over the C ABI with dart:ffi + ffigen, each with a runnable six-example tour) and the planned ecosystem index (jvm, php, rust on crates.io).
 sidebar:
   order: 0
 ---
@@ -23,6 +23,7 @@ binding's public API.
 | [corvid-js](/bindings/corvid-js/) | JavaScript (browser/Worker, engine compiled to wasm) | live — golden-suite CI + examples tour + a CI-enforced wasm size budget; in-memory per session (OPFS persistence is a decided, trigger-based deferral); npm publish pending first release |
 | [corvid-cpp](/bindings/corvid-cpp/) | C++ (RAII over the published cdylib) | live — golden-suite CI + examples tour, header-first RAII library, no Rust toolchain required |
 | [corvid-zig](/bindings/corvid-zig/) | Zig (@cImport of the published cdylib) | live — golden-suite CI + examples tour (text search exercises the v0.3.0 phrase API), move-safe handles and typed borrows, no Rust toolchain required |
+| [corvid-dart](/bindings/corvid-dart/) | Dart (dart:ffi + ffigen over the published cdylib) | live — golden-suite CI + examples tour + an ffigen drift gate, Db/Collection/Query with NativeFinalizer backstops, no Rust toolchain required; pub.dev publish pending first release |
 | corvid (Rust) | Rust | the engine itself; native API |
 
 Every live binding ships the same **examples tour** — six runnable
@@ -42,7 +43,6 @@ One planned-scope line each:
 | Binding | Planned scope |
 |---|---|
 | **corvid-jvm** | JNI bindings for Java/Kotlin with `AutoCloseable` handles; cursor iterators as `java.util.Iterator`; gradle-consumed artifacts per platform. |
-| **corvid-dart** | Flutter/Dart FFI bindings with `Finalizable` handles — mobile-first (the engine already cross-compiles for aarch64 iOS/Android). |
 | **corvid-php** | PHP extension (FFI or native) with one handle per request/thread (ZTS posture per the ABI threading rules). |
 | **corvid-rust** (crates.io) | the engine itself, published to crates.io as `corvid` — replacing the git dependency (see [install](/start/install/)). |
 
@@ -60,7 +60,8 @@ wasm binary node's runtime and browsers share (the two file-backed
 fixture files are the deferred OPFS persistence boundary — their
 in-memory contracts are pinned by its regression suite); corvid-zig
 replays them through a statement-for-statement port of the engine's own
-C harness. On top of the golden suite, every binding's CI executes its
+C harness; corvid-dart drives them through `dart test`. On top of the
+golden suite, every binding's CI executes its
 examples tour. A binding that cannot pass the golden suite is not
 shippable; that is the program's bar.
 

@@ -1,7 +1,7 @@
 // gen-binding-example-blocks.mjs — splice the binding examples into the
 // docs pages.
 //
-// The four binding pages embed each binding's quickstart + hybrid
+// The binding pages embed each binding's quickstart + hybrid
 // examples as code blocks. The source of truth is the binding repos
 // (examples/<name>.* on master, each carrying `docs:begin:<name>` /
 // `docs:end:<name>` markers); this script fetches those files, extracts
@@ -51,6 +51,10 @@ const PAGES = {
   'corvid-zig.md': [
     { name: 'quickstart', file: 'corvid-zig/examples/quickstart.zig', lang: 'zig' },
     { name: 'hybrid', file: 'corvid-zig/examples/hybrid.zig', lang: 'zig' },
+  ],
+  'corvid-dart.md': [
+    { name: 'quickstart', file: 'corvid-dart/examples/quickstart.dart', lang: 'dart' },
+    { name: 'hybrid', file: 'corvid-dart/examples/hybrid.dart', lang: 'dart' },
   ],
 };
 
