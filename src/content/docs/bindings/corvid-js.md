@@ -33,8 +33,11 @@ pinned by the engine's golden fixtures.
 npm i corvid-js
 ```
 
-**Pending first publish** — the package is not on npm yet; build from
-source meanwhile (Rust ≥ 1.88 with the `wasm32-unknown-unknown` target
+**Pending first publish** — 0.3.2 is fully staged (wasm built against
+the v0.3.2 engine pin, gates green, tarball verified) but the
+publishing npm account enforces 2FA, so the publish itself needs a
+one-time password. Build from source meanwhile (Rust ≥ 1.88 with the
+`wasm32-unknown-unknown` target
 + [wasm-pack](https://rustwasm.github.io/wasm-pack/)):
 
 ```sh

@@ -85,9 +85,11 @@ cargo build -p corvid-ffi --release
 npm i corvid-node
 ```
 
-Prebuilt binaries cover `darwin-arm64`, `darwin-x64`, `linux-x64-gnu`,
-`linux-arm64-gnu`, and `win32-x64-msvc`; other platforms build from source
-(Rust ≥ 1.88 + a C toolchain). See [corvid-node](/bindings/corvid-node/).
+Prebuilt binaries will cover `darwin-arm64`, `darwin-x64`, `linux-x64-gnu`,
+`linux-arm64-gnu`, and `win32-x64-msvc` once the first publish lands (the
+release pipeline is wired, pending the repo's `NPM_TOKEN` secret); other
+platforms build from source (Rust ≥ 1.88 + a C toolchain).
+See [corvid-node](/bindings/corvid-node/).
 
 ## The MCP sidecar
 

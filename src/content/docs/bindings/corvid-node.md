@@ -25,9 +25,11 @@ library you can link from anything, see [corvid-c](/bindings/corvid-c/).
 npm i corvid-node
 ```
 
-**Pending first publish** — the package is not on npm yet; publishing waits
-on the platform packages existing first (the repo's plan §5). Until then
-build from source (Rust ≥ 1.88 + a C toolchain):
+**Pending first publish** — the release pipeline is wired (a
+`npm-publish-v*` tag push builds the platform matrix and publishes
+`corvid-node-<platform>` then this package) but it waits on the repo's
+`NPM_TOKEN` secret. Until then build from source (Rust ≥ 1.88 + a C
+toolchain):
 
 ```sh
 npm install
