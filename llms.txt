@@ -106,7 +106,7 @@
 ## Bindings
 
 - [corvid-c](/docs/bindings/corvid-c/): The corvid-c reference C consumer — fetch and verify release artifacts, link, run the golden suite and the six-example tour; quickstart and hybrid examples, installing, and the v0.2.0 macOS artifact story.
-- [corvid-go](/docs/bindings/corvid-go/): The corvid-go binding — cgo over the published FFI artifacts, Db/Collection/Query with Go errors, the Go value mapping and the v0.2.1 map-key boundary, the quickstart and hybrid examples, and the golden-suite correctness story.
+- [corvid-go](/docs/bindings/corvid-go/): The corvid-go binding — cgo over the published FFI artifacts, Db/Collection/Query with Go errors, the Go value mapping and the v0.3.0 map-key collapse, the quickstart and hybrid examples, and the golden-suite correctness story.
 - [corvid-node](/docs/bindings/corvid-node/): The corvid-node Node.js binding — install (pending first npm publish), OOP usage with Db/Collection/Query/field, the JS value mapping, the quickstart and hybrid examples, error handling and the golden-suite correctness story.
 - [corvid-python](/docs/bindings/corvid-python/): The corvid-python binding — install (pending first PyPI release), Db/Collection/Query/field OOP with context-manager lifetimes, the Python value mapping, the quickstart and hybrid examples, and the golden-suite correctness story.
 - [Bindings ecosystem](/docs/bindings/overview/): Language bindings for corvid — four live (corvid-c reference consumer, corvid-node, corvid-python, corvid-go, each with a runnable six-example tour) and the planned ecosystem index (js/wasm, jvm, dart, php, cpp, zig, rust on crates.io).

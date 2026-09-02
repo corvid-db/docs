@@ -51,7 +51,7 @@ documentation section here when it ships.
 
 ## The correctness floor
 
-Every binding replays the engine's **golden fixtures** — the 256-line
+Every binding replays the engine's **golden fixtures** — the 267-line
 fixture suite the C ABI smoke harness runs — against its public API on every
 CI run. corvid-c ports the fixtures in C; corvid-node and corvid-python
 replay them through TypeScript and pytest; corvid-go drives them through
