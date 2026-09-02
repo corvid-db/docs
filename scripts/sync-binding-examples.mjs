@@ -53,8 +53,8 @@ const PAGES = {
     { name: 'hybrid', file: 'corvid-zig/examples/hybrid.zig', lang: 'zig' },
   ],
   'corvid-dart.md': [
-    { name: 'quickstart', file: 'corvid-dart/examples/quickstart.dart', lang: 'dart' },
-    { name: 'hybrid', file: 'corvid-dart/examples/hybrid.dart', lang: 'dart' },
+    { name: 'quickstart', file: 'corvid-dart/example/quickstart.dart', lang: 'dart' },
+    { name: 'hybrid', file: 'corvid-dart/example/hybrid.dart', lang: 'dart' },
   ],
   'corvid-php.md': [
     { name: 'quickstart', file: 'corvid-php/examples/quickstart.php', lang: 'php' },

@@ -53,8 +53,8 @@ FILES=(
   corvid-cpp/examples/hybrid.cpp
   corvid-zig/examples/quickstart.zig
   corvid-zig/examples/hybrid.zig
-  corvid-dart/examples/quickstart.dart
-  corvid-dart/examples/hybrid.dart
+  corvid-dart/example/quickstart.dart
+  corvid-dart/example/hybrid.dart
   corvid-php/examples/quickstart.php
   corvid-php/examples/hybrid.php
   corvid-jvm/examples/Quickstart.kt
