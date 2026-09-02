@@ -25,7 +25,7 @@ binary links at runtime.
 From the pinned release artifacts (default):
 
 ```sh
-make deps          # fetch + verify corvid v0.3.0 into deps/current
+make deps          # fetch + verify corvid v0.3.1 into deps/current
 go test ./...      # the golden suite (267 fixture lines)
 ```
 

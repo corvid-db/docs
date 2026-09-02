@@ -46,7 +46,7 @@ NaN / ±INF / -0.0 cross bit-exact.
 From the pinned release artifacts:
 
 ```sh
-./fetch.sh                    # fetch + sha256-verify corvid v0.3.0 into deps/current
+./fetch.sh                    # fetch + sha256-verify corvid v0.3.1 into deps/current
 ./scripts/build-ext.sh        # phpize + configure + make (needs PHP 8.3+ dev headers)
 php -d extension=ext/corvid/modules/corvid.so examples/quickstart.php
 ```

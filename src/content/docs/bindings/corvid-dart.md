@@ -46,7 +46,7 @@ The raw ffigen layer stays importable as `package:corvid_dart/src/...`
 From the pinned release artifacts:
 
 ```sh
-./fetch.sh                     # fetch + sha256-verify corvid v0.3.0 into deps/current
+./fetch.sh                     # fetch + sha256-verify corvid v0.3.1 into deps/current
 dart pub get
 dart test                      # the golden suite (267 lines) + supplemental contracts
 dart run examples/quickstart.dart

@@ -53,7 +53,7 @@ From source (Maven Central publish pending — it rides the engine's
 release cadence; see the repo README):
 
 ```sh
-./fetch.sh                    # fetch + sha256-verify corvid v0.3.0
+./fetch.sh                    # fetch + sha256-verify corvid v0.3.1
 ./scripts/build-native.sh     # compile the JNI shim into build/native
 ./gradlew test                # the golden suite (267 executable lines)
 ./gradlew examples            # the six-example tour
