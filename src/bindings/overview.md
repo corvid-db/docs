@@ -1,6 +1,6 @@
 ---
 title: Bindings ecosystem
-description: Language bindings for corvid — five live (corvid-c reference consumer, corvid-node, corvid-python, corvid-go, and corvid-js in the browser via WebAssembly, each with a runnable six-example tour) and the planned ecosystem index (jvm, dart, php, cpp, zig, rust on crates.io).
+description: Language bindings for corvid — six live (corvid-c reference consumer, corvid-node, corvid-python, corvid-go, corvid-js in the browser via WebAssembly, and corvid-cpp with RAII over the C ABI, each with a runnable six-example tour) and the planned ecosystem index (jvm, dart, php, zig, rust on crates.io).
 sidebar:
   order: 0
 ---
@@ -21,6 +21,7 @@ binding's public API.
 | [corvid-python](/bindings/corvid-python/) | Python (native, engine compiled in) | live — golden-suite CI + examples tour; PyPI publish pending first release |
 | [corvid-go](/bindings/corvid-go/) | Go (cgo over the published cdylib) | live — golden-suite CI + examples tour, no Rust toolchain required |
 | [corvid-js](/bindings/corvid-js/) | JavaScript (browser/Worker, engine compiled to wasm) | live — golden-suite CI + examples tour + a CI-enforced wasm size budget; in-memory per session (OPFS persistence is a decided, trigger-based deferral); npm publish pending first release |
+| [corvid-cpp](/bindings/corvid-cpp/) | C++ (RAII over the published cdylib) | live — golden-suite CI + examples tour, header-first RAII library, no Rust toolchain required |
 | corvid (Rust) | Rust | the engine itself; native API |
 
 Every live binding ships the same **examples tour** — six runnable
@@ -42,7 +43,6 @@ One planned-scope line each:
 | **corvid-jvm** | JNI bindings for Java/Kotlin with `AutoCloseable` handles; cursor iterators as `java.util.Iterator`; gradle-consumed artifacts per platform. |
 | **corvid-dart** | Flutter/Dart FFI bindings with `Finalizable` handles — mobile-first (the engine already cross-compiles for aarch64 iOS/Android). |
 | **corvid-php** | PHP extension (FFI or native) with one handle per request/thread (ZTS posture per the ABI threading rules). |
-| **corvid-cpp** | RAII header-only wrapper over `corvid.h` — unique_ptr handles, ranges-compatible cursors, exceptions mapped from `corvid_err`. |
 | **corvid-zig** | `extern` declarations generated from the ABI surface with Zig error-union returns and defer-friendly deinitializers. |
 | **corvid-rust** (crates.io) | the engine itself, published to crates.io as `corvid` — replacing the git dependency (see [install](/start/install/)). |
 
