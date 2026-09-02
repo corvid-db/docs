@@ -44,6 +44,10 @@ const PAGES = {
     { name: 'quickstart', file: 'corvid-js/examples/quickstart.js', lang: 'js' },
     { name: 'hybrid', file: 'corvid-js/examples/hybrid.js', lang: 'js' },
   ],
+  'corvid-cpp.md': [
+    { name: 'quickstart', file: 'corvid-cpp/examples/quickstart.cpp', lang: 'cpp' },
+    { name: 'hybrid', file: 'corvid-cpp/examples/hybrid.cpp', lang: 'cpp' },
+  ],
 };
 
 // The marker line styles per binding (C block comments, // and #).
