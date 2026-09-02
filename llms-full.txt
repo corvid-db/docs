@@ -162,9 +162,11 @@ cargo build -p corvid-ffi --release
 npm i corvid-node
 ```
 
-Prebuilt binaries cover `darwin-arm64`, `darwin-x64`, `linux-x64-gnu`,
-`linux-arm64-gnu`, and `win32-x64-msvc`; other platforms build from source
-(Rust ≥ 1.88 + a C toolchain). See [corvid-node](/bindings/corvid-node/).
+Prebuilt binaries will cover `darwin-arm64`, `darwin-x64`, `linux-x64-gnu`,
+`linux-arm64-gnu`, and `win32-x64-msvc` once the first publish lands (the
+release pipeline is wired, pending the repo's `NPM_TOKEN` secret); other
+platforms build from source (Rust ≥ 1.88 + a C toolchain).
+See [corvid-node](/bindings/corvid-node/).
 
 ## The MCP sidecar
 
@@ -6179,8 +6181,11 @@ pinned by the engine's golden fixtures.
 npm i corvid-js
 ```
 
-**Pending first publish** — the package is not on npm yet; build from
-source meanwhile (Rust ≥ 1.88 with the `wasm32-unknown-unknown` target
+**Pending first publish** — 0.3.2 is fully staged (wasm built against
+the v0.3.2 engine pin, gates green, tarball verified) but the
+publishing npm account enforces 2FA, so the publish itself needs a
+one-time password. Build from source meanwhile (Rust ≥ 1.88 with the
+`wasm32-unknown-unknown` target
 + [wasm-pack](https://rustwasm.github.io/wasm-pack/)):
 
 ```sh
@@ -6577,9 +6582,11 @@ library you can link from anything, see [corvid-c](/bindings/corvid-c/).
 npm i corvid-node
 ```
 
-**Pending first publish** — the package is not on npm yet; publishing waits
-on the platform packages existing first (the repo's plan §5). Until then
-build from source (Rust ≥ 1.88 + a C toolchain):
+**Pending first publish** — the release pipeline is wired (a
+`npm-publish-v*` tag push builds the platform matrix and publishes
+`corvid-node-<platform>` then this package) but it waits on the repo's
+`NPM_TOKEN` secret. Until then build from source (Rust ≥ 1.88 + a C
+toolchain):
 
 ```sh
 npm install
