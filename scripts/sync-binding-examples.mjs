@@ -56,6 +56,10 @@ const PAGES = {
     { name: 'quickstart', file: 'corvid-dart/examples/quickstart.dart', lang: 'dart' },
     { name: 'hybrid', file: 'corvid-dart/examples/hybrid.dart', lang: 'dart' },
   ],
+  'corvid-php.md': [
+    { name: 'quickstart', file: 'corvid-php/examples/quickstart.php', lang: 'php' },
+    { name: 'hybrid', file: 'corvid-php/examples/hybrid.php', lang: 'php' },
+  ],
 };
 
 // The marker line styles per binding (C block comments, // and #).
