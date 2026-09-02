@@ -1,6 +1,6 @@
 ---
 title: Changelog highlights
-description: Release highlights for corvid and its ecosystem — v0.1.0, v0.1.1, v0.2.0, v0.2.1, v0.3.0 — inlined here, self-contained.
+description: Release highlights for corvid and its ecosystem — v0.1.0, v0.1.1, v0.2.0, v0.2.1, v0.3.0, v0.3.1 — inlined here, self-contained.
 sidebar:
   order: 1
 ---
@@ -11,6 +11,23 @@ at release time from the engine repository's
 provenance only; everything you need to evaluate a release is here). Until
 1.0, the API and on-disk format change without backward-compatibility
 guarantees; format changes migrate via [dump/load](/admin/dump-load/).
+
+## v0.3.1 (2026-09)
+
+**Header-only fix: `corvid.h` is portable C11/C++.** The generated header
+had been wrapping every frozen enum in C23 fixed-underlying-type guards
+(`#if __STDC_VERSION__ >= 202311L` + `: uint32_t`), whose pre-C23
+fallback (`typedef uint32_t corvid_status;` beside the enum tag) is
+ill-formed C++ — the tag and the typedef share a namespace there. Found
+by corvid-cpp (the C++ binding), which had to preprocessor-mask the
+guards in its ABI translation units. The header now emits the plain
+`typedef enum { ... } corvid_xxx;` the FFI spec has always shown —
+valid C11, C23, and every C++ standard; verified by compiling a trivial
+TU both ways against the published artifact's header. Values,
+signatures, and the 124-symbol surface are unchanged; the Rust-side
+`#[repr(u32)]` wire-type pin is untouched; `FFI_VERSION` and the soname
+stay at 1. C++ consumers drop their workarounds at the next pin;
+existing v0.3.0 pins keep working (the C-level surface did not move).
 
 ## v0.3.0 (2026-09)
 
