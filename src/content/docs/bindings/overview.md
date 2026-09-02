@@ -1,6 +1,6 @@
 ---
 title: Bindings ecosystem
-description: Language bindings for corvid — nine live (corvid-c reference consumer, corvid-node, corvid-python, corvid-go, corvid-js in the browser via WebAssembly, corvid-cpp with RAII over the C ABI, corvid-zig over the C ABI with Zig error unions, corvid-dart over the C ABI with dart:ffi + ffigen, and corvid-php as a native PHP extension over the C ABI, each with a runnable six-example tour) and the planned ecosystem index (jvm, rust on crates.io).
+description: Language bindings for corvid — ten live (corvid-c reference consumer, corvid-node, corvid-python, corvid-go, corvid-js in the browser via WebAssembly, corvid-cpp with RAII over the C ABI, corvid-zig over the C ABI with Zig error unions, corvid-dart over the C ABI with dart:ffi + ffigen, corvid-php as a native PHP extension over the C ABI, and corvid-jvm — Kotlin-first over the C ABI via a JNI shim, Java consumes the same artifact, each with a runnable six-example tour) and the planned ecosystem index (rust on crates.io).
 sidebar:
   order: 0
 ---
@@ -25,6 +25,7 @@ binding's public API.
 | [corvid-zig](/bindings/corvid-zig/) | Zig (@cImport of the published cdylib) | live — golden-suite CI + examples tour (text search exercises the v0.3.0 phrase API), move-safe handles and typed borrows, no Rust toolchain required |
 | [corvid-dart](/bindings/corvid-dart/) | Dart (dart:ffi + ffigen over the published cdylib) | live — golden-suite CI + examples tour + an ffigen drift gate, Db/Collection/Query with NativeFinalizer backstops, no Rust toolchain required; pub.dev publish pending first release |
 | [corvid-php](/bindings/corvid-php/) | PHP (native extension over the published cdylib) | live — golden-suite CI (NTS 8.4/8.3 + a linux ZTS leg) + examples tour, refcounted handle lifetimes with the honest FPM story; PIE/PECL publish pending first release |
+| [corvid-jvm](/bindings/corvid-jvm/) | Kotlin/Java (JNI shim over the published cdylib) | live — golden-suite CI (linux/macos/windows × JDK 21/17) + examples tour, Kotlin-first API with `AutoCloseable` handles and `CorvidException`, Java consumes the same artifact; Maven Central publish pending first release |
 | corvid (Rust) | Rust | the engine itself; native API |
 
 Every live binding ships the same **examples tour** — six runnable
@@ -43,7 +44,6 @@ One planned-scope line each:
 
 | Binding | Planned scope |
 |---|---|
-| **corvid-jvm** | JNI bindings for Java/Kotlin with `AutoCloseable` handles; cursor iterators as `java.util.Iterator`; gradle-consumed artifacts per platform. |
 | **corvid-rust** (crates.io) | the engine itself, published to crates.io as `corvid` — replacing the git dependency (see [install](/start/install/)). |
 
 Planned means planned: none of the above exist yet. Each will get its own
@@ -61,7 +61,8 @@ fixture files are the deferred OPFS persistence boundary — their
 in-memory contracts are pinned by its regression suite); corvid-zig
 replays them through a statement-for-statement port of the engine's own
 C harness; corvid-dart drives them through `dart test`; corvid-php
-replays them through PHPUnit (and a direct driver on its ZTS CI leg). On
+replays them through PHPUnit (and a direct driver on its ZTS CI leg);
+corvid-jvm drives them through JUnit 5 in Gradle. On
 top of the golden suite, every binding's CI executes its
 examples tour. A binding that cannot pass the golden suite is not
 shippable; that is the program's bar.

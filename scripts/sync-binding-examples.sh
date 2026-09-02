@@ -57,6 +57,8 @@ FILES=(
   corvid-dart/examples/hybrid.dart
   corvid-php/examples/quickstart.php
   corvid-php/examples/hybrid.php
+  corvid-jvm/examples/Quickstart.kt
+  corvid-jvm/examples/Hybrid.kt
 )
 
 for f in "${FILES[@]}"; do
@@ -71,12 +73,12 @@ done
 if [ "$CHECK" -eq 1 ]; then
   PAGES="$TMP/pages"
   mkdir -p "$PAGES"
-  for page in corvid-c corvid-node corvid-python corvid-go corvid-js corvid-cpp corvid-zig corvid-dart corvid-php; do
+  for page in corvid-c corvid-node corvid-python corvid-go corvid-js corvid-cpp corvid-zig corvid-dart corvid-php corvid-jvm; do
     cp "src/content/docs/bindings/${page}.md" "$PAGES/${page}.md"
   done
   node scripts/sync-binding-examples.mjs "$TMP" "$PAGES"
   status=0
-  for page in corvid-c corvid-node corvid-python corvid-go corvid-js corvid-cpp corvid-zig corvid-dart corvid-php; do
+  for page in corvid-c corvid-node corvid-python corvid-go corvid-js corvid-cpp corvid-zig corvid-dart corvid-php corvid-jvm; do
     if diff -u "src/content/docs/bindings/${page}.md" "$PAGES/${page}.md" \
          > "$TMP/diff-${page}.txt" 2>&1; then
       echo "ok: bindings/${page}.md example blocks match ${REF}"
