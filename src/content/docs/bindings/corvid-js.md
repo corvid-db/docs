@@ -225,9 +225,13 @@ tag to a binding API or a documented N/A.
 ## Development
 
 ```sh
-npm install                 # vitest (Rust + wasm-pack required for the build)
+npm install                 # vitest + playwright (Rust + wasm-pack required for the build)
 npm run build               # wasm-pack build --release --target web -> pkg/
-npm test                    # the golden suite (230 lines) + regressions
+npm test                    # Node leg: golden (230 lines) + regressions + OPFS suites
+npm run test:browser        # the golden suite in real Chromium (await init())
+npm run test:e2e            # async OPFS fixtures + reload/cross-tab (Playwright)
+npm run size-gate           # gzipped wasm <= 1 MiB
+npm run surface-gate        # SURFACE.tsv vs the pinned engine
 node examples/hybrid.js     # the examples tour
 npm run lint                # cargo fmt --check + clippy -D warnings
 ```
