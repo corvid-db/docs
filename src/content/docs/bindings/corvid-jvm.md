@@ -49,11 +49,24 @@ to the wrapper types.
 
 ## Install
 
-From source (Maven Central publish pending — it rides the engine's
-release cadence; see the repo README):
+```kotlin
+dependencies {
+    implementation("io.github.corvid-db:corvid-jvm:0.4.0")
+    runtimeOnly("io.github.corvid-db:corvid-jvm:0.4.0:macos-arm64")
+    // classifiers: macos-arm64 | macos-x64 | linux-x64 | linux-arm64 | windows-x64
+}
+```
+
+Published to **Maven Central** — the jars are self-contained: the
+platform classifier bundles the JNI shim AND the engine cdylib, and
+the loader extracts both to a temp dir and `System.load()`s them, so a
+consumer needs nothing else (no fetch, no compiler, no
+`java.library.path`). The version rides the engine's release cascade.
+
+Building from source instead (development):
 
 ```sh
-./fetch.sh                    # fetch + sha256-verify corvid v0.3.2
+./fetch.sh                    # fetch + sha256-verify corvid v0.4.0
 ./scripts/build-native.sh     # compile the JNI shim into build/native
 ./gradlew test                # the golden suite (267 executable lines)
 ./gradlew examples            # the six-example tour
