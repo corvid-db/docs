@@ -6,11 +6,11 @@ sidebar:
 ---
 
 <!-- GENERATED FILE — do not edit by hand. Source: the engine's
-     docs/FFI.md §1.3 frozen code table at tag v0.3.2. Regenerate with
-     scripts/sync-from-engine.sh v0.3.2 — CI verifies the committed copy
+     docs/FFI.md §1.3 frozen code table at tag v0.4.0. Regenerate with
+     scripts/sync-from-engine.sh v0.4.0 — CI verifies the committed copy
      matches the pinned tag (see .engine-pin). -->
 
-> **generated — synced from the engine at v0.3.2.** The detailed codes
+> **generated — synced from the engine at v0.4.0.** The detailed codes
 > returned by `corvid_last_error_code()`. Value 0 means "no error recorded
 > on this thread". Codes 1–18 map 1:1 onto the engine's
 > `corvid::Error` variants (pinned by the variant-inventory snapshot
