@@ -12,6 +12,7 @@
     "check-links": "node scripts/check-links.mjs",
     "sync-from-engine": "bash scripts/sync-from-engine.sh",
     "sync-binding-examples": "bash scripts/sync-binding-examples.sh",
+    "sync-api-glance": "bash scripts/sync-api-glance.sh",
     "verify-sync": "bash scripts/verify-sync.sh"
   },
   "dependencies": {

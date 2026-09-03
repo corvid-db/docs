@@ -29,16 +29,24 @@ for f in constructs.md error-codes.md; do
   fi
 done
 
-# The binding-example blocks: the four binding pages embed each
-# binding's quickstart + hybrid examples, imported from the binding
-# repos' master (the tour CI executes). Drift means a binding example
-# changed without re-running the splice here.
+# The binding-example blocks: every binding page embeds the repo's
+# six-example tour, imported from the binding repos' master (the tour
+# CI executes). Drift means a binding example changed without
+# re-running the splice here.
 if ! bash scripts/sync-binding-examples.sh --check; then
+  status=1
+fi
+
+# The api-glance tables: folded from each repo's docs/SURFACE.tsv at
+# master (the manifest each repo's own surface gate polices at the
+# pinned engine tag). Drift means a manifest changed without
+# re-running the splice here.
+if ! bash scripts/sync-api-glance.sh --check; then
   status=1
 fi
 
 if [ "$status" -ne 0 ]; then
   echo "" >&2
-  echo "Run: scripts/sync-from-engine.sh && scripts/sync-binding-examples.sh && git commit" >&2
+  echo "Run: scripts/sync-from-engine.sh && scripts/sync-binding-examples.sh && scripts/sync-api-glance.sh && git commit" >&2
 fi
 exit "$status"
