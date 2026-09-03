@@ -6,20 +6,13 @@ data store for AI applications. Built with [Astro
 Starlight](https://starlight.astro.build), deployed to GitHub Pages at
 **<https://corvid-db.github.io/docs/>**.
 
-## Repository layout
-
-| Path | What it is |
-|---|---|
-| `src/content/docs/` | The pages (markdown, hand-maintained except two generated files) |
-| `src/content/docs/reference/constructs.md` | **Generated** — every public construct + covering tests, from the engine's `docs/SYNTAX.md` |
-| `src/content/docs/reference/error-codes.md` | **Generated** — the frozen error-code table, from the engine's `docs/FFI.md` §1.3 |
-| `.engine-pin` | The engine tag the generated pages are pinned to (currently `v0.2.1`) |
-| `scripts/sync-from-engine.sh` | Regenerate the generated pages from an engine tag |
-| `scripts/verify-sync.sh` | Drift gate: committed generated pages must match the pinned tag (runs in CI) |
-| `scripts/gen-llms.mjs` | Post-build: copies every page's markdown to `dist/src/`, generates `/llms.txt` and `/llms-full.txt` |
-| `scripts/check-links.mjs` | Internal link check over the built site (runs in CI) |
-| `plugins/remark-base-paths.mjs` | Rewrites root-relative content links with the build's base path (current vs `/vX.Y.Z/`) |
-| `astro.config.mjs` | Site config; reads `SITE_VERSION`/`SITE_BASE` for the two build shapes |
+The pages are hand-maintained markdown except two **generated**
+reference pages — the public-constructs list (`reference/constructs.md`,
+from the engine's `docs/SYNTAX.md`) and the frozen error-code table
+(`reference/error-codes.md`, from the engine's `docs/FFI.md` §1.3) —
+which are regenerated from the engine tag recorded in `.engine-pin`.
+CI drift-gates the committed copies against that tag, so the generated
+pages can never silently diverge from the engine they document.
 
 ## Versioning (PostgreSQL-style)
 
@@ -38,9 +31,6 @@ Starlight](https://starlight.astro.build), deployed to GitHub Pages at
 The honest framing (documented on the site's "About these docs" page): a
 snapshot reflects **this repo** at the release moment; the engine's
 changelog remains the record of what changed in the engine.
-
-First snapshot: **v0.2.1** (`releases/v0.2.1`), identical to the initial
-site content.
 
 ## Working on the site
 
@@ -80,7 +70,7 @@ shape and link check it too. Deploys are separate workflows.
    tag) — it builds and publishes `/docs/vX.Y.Z/`.
 3. Update the current site's banner link list
    (`src/components/VersionBanner.astro`) and, if the engine tag moved, the
-   `.engine-pin` + `scripts/sync-from-engine.sh` regeneration + commit.
+   `.engine-pin` + regeneration + commit.
 
 ## License
 
