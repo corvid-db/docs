@@ -1,6 +1,6 @@
 ---
 title: Install
-description: How to install corvid — crates.io for Rust, the C ABI artifacts from GitHub releases, and the published language bindings (npm, PyPI, pub.dev, Packagist); feature flags and platform support.
+description: How to install corvid — crates.io for Rust, the C ABI artifacts from GitHub releases, and the published language bindings (npm, PyPI, pub.dev, Packagist, Maven Central); feature flags and platform support.
 sidebar:
   order: 1
 ---
@@ -16,11 +16,17 @@ corvid is consumed four ways:
    [`corvid-node`](https://www.npmjs.com/package/corvid-node) and
    [`corvid-js`](https://www.npmjs.com/package/corvid-js) on npm,
    [`corvid-python`](https://pypi.org/project/corvid-python/) on PyPI,
-   [`corvid`](https://pub.dev/packages/corvid) on pub.dev, and
+   [`corvid`](https://pub.dev/packages/corvid) on pub.dev,
    [`corvid/php-corvid`](https://packagist.org/packages/corvid/php-corvid)
-   on Packagist (installed with PIE). The full matrix — including the
-   artifact-consuming C/Go/C++/Zig/JVM bindings — is the
-   [bindings overview](/bindings/overview/).
+   on Packagist (installed with PIE), and
+   `io.github.corvid-db:corvid-jvm` (JVM) plus
+   `io.github.corvid-db:corvid-android` (the Android AAR) on
+   [Maven Central](https://central.sonatype.com/namespace/io.github.corvid-db).
+   On Apple platforms, [corvid-swift](/bindings/corvid-swift/) installs
+   by Swift Package URL (the tag is the release):
+   `.package(url: "https://github.com/corvid-db/corvid-swift.git", from: "0.4.1")`.
+   The full matrix — including the artifact-consuming C/Go/C++/Zig
+   bindings — is the [bindings overview](/bindings/overview/).
 4. **In the browser** — `npm i corvid-js`: the engine compiled to wasm,
    synchronous in-memory OOP plus async OPFS persistence (see
    [corvid-js](/bindings/corvid-js/)).
@@ -37,7 +43,7 @@ dependency to an exact release tag instead:
 
 ```toml
 [dependencies]
-corvid-db = { git = "https://github.com/corvid-db/corvid", tag = "v0.4.0" }
+corvid-db = { git = "https://github.com/corvid-db/corvid", tag = "v0.4.1" }
 ```
 
 Requires stable Rust, 2024 edition, MSRV **1.88**. The default build has no
@@ -69,6 +75,14 @@ cdylib, `corvid.h`, and golden fixtures, with sha256 entries in
   v0.2.1)
 - Windows: `corvid.dll` plus its MSVC import library `corvid.dll.lib` —
   link the import lib, place the DLL on the loader path
+
+Since v0.4.1 the mobile sets ship on the same releases: the Android
+cdylib archives for `aarch64-linux-android` (arm64-v8a) and
+`x86_64-linux-android` (same tarball shape — cdylib + `corvid.h` +
+golden fixtures; consumed by the corvid-android AAR) and the
+`corvid-swift-<tag>.zip` holding the `CorvidEngine.xcframework`
+(iOS device + fat iOS-simulator + fat macOS staticlib slices) that the
+corvid-swift SPM package pins as its binary target.
 
 The contract these artifacts implement is [the C ABI](/ffi/overview/) specification.
 [`corvid-c`](/bindings/corvid-c/) shows the full consumption pattern: fetch a

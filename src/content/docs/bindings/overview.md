@@ -1,6 +1,6 @@
 ---
 title: Bindings ecosystem
-description: Language bindings for corvid — eleven live (corvid-c reference consumer, corvid-node, corvid-python, corvid-go, corvid-js in the browser via WebAssembly with OPFS persistence, corvid-cpp with RAII over the C ABI, corvid-zig over the C ABI with Zig error unions, corvid-dart over the C ABI with dart:ffi + ffigen, corvid-php as a native PHP extension over the C ABI, corvid-jvm — Kotlin-first over the C ABI via a JNI shim, Java consumes the same artifact, and the engine itself on crates.io), each with a runnable six-example tour and registry-published where the language has one.
+description: Language bindings for corvid — twelve live (corvid-c reference consumer, corvid-node, corvid-python, corvid-go, corvid-js in the browser via WebAssembly with OPFS persistence, corvid-cpp with RAII over the C ABI, corvid-zig over the C ABI with Zig error unions, corvid-dart over the C ABI with dart:ffi + ffigen, corvid-php as a native PHP extension over the C ABI, corvid-jvm — Kotlin-first over the C ABI via a JNI shim, Java consumes the same artifact — plus its corvid-android AAR, corvid-swift for Apple platforms over the published xcframework, and the engine itself on crates.io), each with a runnable six-example tour and registry-published where the language has one.
 sidebar:
   order: 0
 ---
@@ -26,7 +26,8 @@ binding's public API.
 | [corvid-zig](/bindings/corvid-zig/) | Zig (@cImport of the published cdylib) | live — golden-suite CI + examples tour (text search exercises the phrase API), move-safe handles and typed borrows, no Rust toolchain required |
 | [corvid-dart](/bindings/corvid-dart/) | Dart (dart:ffi + ffigen over the published cdylib) | live — golden-suite CI + examples tour + an ffigen drift gate, Db/Collection/Query with NativeFinalizer backstops, no Rust toolchain required; **pub.dev** `corvid` |
 | [corvid-php](/bindings/corvid-php/) | PHP (native extension over the published cdylib) | live — golden-suite CI (NTS 8.4/8.3 + a linux ZTS leg) + examples tour, refcounted handle lifetimes with the honest FPM story; **Packagist** `corvid/php-corvid`, installed with PIE |
-| [corvid-jvm](/bindings/corvid-jvm/) | Kotlin/Java (JNI shim over the published cdylib) | live — golden-suite CI (linux/macos/windows × JDK 21/17) + examples tour, Kotlin-first API with `AutoCloseable` handles and `CorvidException`, Java consumes the same artifact; **Maven Central** `io.github.corvid-db:corvid-jvm` (self-contained per-platform jars) |
+| [corvid-jvm](/bindings/corvid-jvm/) | Kotlin/Java (JNI shim over the published cdylib) + Android | live — golden-suite CI (linux/macos/windows × JDK 21/17) + examples tour, Kotlin-first API with `AutoCloseable` handles and `CorvidException`, Java consumes the same artifact; **Maven Central** `io.github.corvid-db:corvid-jvm` (self-contained per-platform jars) and `io.github.corvid-db:corvid-android` (the AAR — same wrapper, `arm64-v8a`/`x86_64` jniLibs, minSdk 26) |
+| [corvid-swift](/bindings/corvid-swift/) | Swift on Apple platforms (iOS 13+ device/simulator, macOS; over the published xcframework, no shim) | live — golden-suite CI (267/267 on macOS) + iOS-Simulator compile leg + surface gate; installed by SPM package URL, the tag IS the release (binary target checksum-pinned) |
 | corvid (Rust) | Rust | the engine itself — **crates.io** `corvid-db`, native API |
 
 Every live binding ships the same **examples tour** — six runnable
