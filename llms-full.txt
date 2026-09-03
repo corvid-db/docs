@@ -5312,23 +5312,13 @@ the ABI's ownership rules (cloned inputs, consumed queries and predicates,
 borrowed row views) are meant to be driven by hand, and the place where
 published-artifact defects surface first.
 
-## What's inside
-
-| Path | What it is |
-|---|---|
-| `fetch.sh` / `fetch.ps1` | Download the pinned release archive, verify against the release's `checksums.txt` (sha256), extract into gitignored `deps/` |
-| `CMakeLists.txt` | Offline-first build consuming `deps/`; builds the demo, the examples tour, and the golden-suite port; installs a `corvid.pc` |
-| `examples/demo.c` | A small idiomatic consumer: open, insert, query, print (~20 symbols) |
-| `examples/{quickstart,hybrid,vector_index,text_search,graph,geo}.c` | The examples tour — one runnable program per concept, each a ctest on every CI leg |
-| `test/golden.c` | The golden-suite port — replays the engine's 267-line fixture suite against the downloaded libcorvid |
-
 ## Quick start
 
 Requirements: a C11 compiler, CMake ≥ 3.28, `curl` + `shasum`/`sha256sum`
 (macOS/Linux) or PowerShell 5+ (Windows).
 
 ```sh
-./fetch.sh                     # download + verify corvid v0.3.2 into deps/
+./fetch.sh                     # download + verify corvid v0.4.1 into deps/
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build --output-on-failure   # golden suite + demo + examples
@@ -5986,7 +5976,7 @@ pkg-config --cflags --libs corvid
 ## Versioning
 
 The engine pin lives in one variable in the fetch scripts
-(`CORVID_VERSION=v0.3.2`). Artifacts are always taken from that exact tag's
+(`CORVID_VERSION=v0.4.1`). Artifacts are always taken from that exact tag's
 GitHub release and sha256-verified; `deps/` is never committed.
 
 ## The macOS note (a bindings-program war story)
@@ -6013,7 +6003,7 @@ binding: a **header-first RAII library** over the frozen C ABI (one
 public header, `corvid/corvid.hpp`, plus one implementation TU), linking
 the **published FFI artifacts** — the platform cdylib, the generated
 header, and the golden fixtures — downloaded from a pinned engine
-release (v0.3.2) and sha256-verified. No engine checkout, no Rust
+release (v0.4.1) and sha256-verified. No engine checkout, no Rust
 toolchain, no dependencies beyond the C++ standard library.
 
 **When to choose this binding:** you are writing modern C++ (C++20
@@ -6039,7 +6029,7 @@ PowerShell):
 
 ```sh
 git clone https://github.com/corvid-db/corvid-cpp && cd corvid-cpp
-./fetch.sh          # download + sha256-verify corvid v0.3.2 into deps/
+./fetch.sh          # download + sha256-verify corvid v0.4.1 into deps/
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build --output-on-failure
@@ -6561,13 +6551,13 @@ Header-first: the [corvid/ headers](https://github.com/corvid-db/corvid-cpp/tree
 Every binding replays the engine's golden fixtures; corvid-cpp ports
 the C harness itself to C++ (`test/golden.cpp`) and drives the
 **downloaded** cdylib over the release's fixtures — 267 executable
-lines at v0.3.2 (byte-identical with v0.3.0's — unchanged through v0.3.2), including the additive
+lines (unchanged since v0.3.0), including the additive
 map-keys and phrase ops. If the
 published `.so`/`.dylib`/`.dll`, header, or fixtures disagree, that CI
 leg reddens where the engine's own suite stayed green. On top of the
-golden port, `test/raii.cpp` exercises the wrapper's own surface (145
-checks), and `docs/SURFACE.tsv` resolves all 327 engine constructs
-(180 mapped / 147 N/A-with-reason) against a CI gate.
+golden port, `test/raii.cpp` exercises the wrapper's own surface (157
+checks), and `docs/SURFACE.tsv` resolves all 331 engine constructs
+(180 mapped / 151 N/A-with-reason) against a CI gate.
 
 Next: the [C ABI reference](/ffi/overview/) underneath every binding.
 
@@ -6618,7 +6608,7 @@ The raw ffigen layer stays importable as `package:corvid_dart/src/...`
 From the pinned release artifacts:
 
 ```sh
-./fetch.sh                     # fetch + sha256-verify corvid v0.3.2 into deps/current
+./fetch.sh                     # fetch + sha256-verify corvid v0.4.1 into deps/current
 dart pub get
 dart test                      # the golden suite (267 lines) + supplemental contracts
 dart run examples/quickstart.dart
@@ -7025,7 +7015,7 @@ the repo and byte-compared against the release's copies at fetch time,
 so a bad artifact is a loud fetch failure, never a silent skip.
 
 On top sits `docs/SURFACE.tsv` — every construct of the engine's public
-surface (327 rows at this pin) resolved to the Dart API exposing it
+surface (331 rows at this pin) resolved to the Dart API exposing it
 plus the golden line that proves it, or `N/A` with the ABI's §9
 reason, gated in CI (`scripts/surface-gate.sh`). A fourth CI job
 regenerates the ffigen layer (`lib/src/bindings.dart`) from the
@@ -7060,7 +7050,7 @@ binary links at runtime.
 From the pinned release artifacts (default):
 
 ```sh
-make deps          # fetch + verify corvid v0.3.2 into deps/current
+make deps          # fetch + verify corvid v0.4.1 into deps/current
 go test ./...      # the golden suite (267 fixture lines)
 ```
 
@@ -8539,7 +8529,7 @@ byte-compared against the release's copies at fetch time (the repo's
 so a bad artifact is a loud fetch failure, never a silent skip.
 
 On top sits `docs/SURFACE.tsv` — every construct of the engine's public
-surface (327 rows at this pin) resolved to the Kotlin API exposing it
+surface (331 rows at this pin) resolved to the Kotlin API exposing it
 plus the golden line that proves it, or `N/A` with the ABI's §9 reason,
 gated in CI (`scripts/surface-gate.sh`).
 
@@ -9058,7 +9048,7 @@ NaN / ±INF / -0.0 cross bit-exact.
 From the pinned release artifacts:
 
 ```sh
-./fetch.sh                    # fetch + sha256-verify corvid v0.3.2 into deps/current
+./fetch.sh                    # fetch + sha256-verify corvid v0.4.1 into deps/current
 ./scripts/build-ext.sh        # phpize + configure + make (needs PHP 8.3+ dev headers)
 php -d extension=ext/corvid/modules/corvid.so examples/quickstart.php
 ```
@@ -9517,7 +9507,7 @@ release's copies at fetch time, so a bad artifact is a loud fetch
 failure, never a silent skip.
 
 On top sits `docs/SURFACE.tsv` — every construct of the engine's public
-surface (327 rows at this pin) resolved to the PHP API exposing it plus
+surface (331 rows at this pin) resolved to the PHP API exposing it plus
 the golden line that proves it, or `N/A` with the ABI's §9 reason,
 gated in CI (`scripts/surface-gate.sh`).
 
@@ -11093,7 +11083,7 @@ byte-compared against the release's copies at fetch time, so a bad
 artifact is a loud fetch failure, never a silent skip.
 
 On top sits `docs/SURFACE.tsv` — every construct of the engine's public
-surface (327 rows at this pin) resolved to the Zig API exposing it plus
+surface (331 rows at this pin) resolved to the Zig API exposing it plus
 the golden line that proves it, or `N/A` with the ABI's §9 reason,
 gated in CI (`scripts/surface-gate.sh`).
 

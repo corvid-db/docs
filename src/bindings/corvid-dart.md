@@ -46,7 +46,7 @@ The raw ffigen layer stays importable as `package:corvid_dart/src/...`
 From the pinned release artifacts:
 
 ```sh
-./fetch.sh                     # fetch + sha256-verify corvid v0.3.2 into deps/current
+./fetch.sh                     # fetch + sha256-verify corvid v0.4.1 into deps/current
 dart pub get
 dart test                      # the golden suite (267 lines) + supplemental contracts
 dart run examples/quickstart.dart
@@ -453,7 +453,7 @@ the repo and byte-compared against the release's copies at fetch time,
 so a bad artifact is a loud fetch failure, never a silent skip.
 
 On top sits `docs/SURFACE.tsv` — every construct of the engine's public
-surface (327 rows at this pin) resolved to the Dart API exposing it
+surface (331 rows at this pin) resolved to the Dart API exposing it
 plus the golden line that proves it, or `N/A` with the ABI's §9
 reason, gated in CI (`scripts/surface-gate.sh`). A fourth CI job
 regenerates the ffigen layer (`lib/src/bindings.dart`) from the

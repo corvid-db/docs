@@ -22,23 +22,13 @@ the ABI's ownership rules (cloned inputs, consumed queries and predicates,
 borrowed row views) are meant to be driven by hand, and the place where
 published-artifact defects surface first.
 
-## What's inside
-
-| Path | What it is |
-|---|---|
-| `fetch.sh` / `fetch.ps1` | Download the pinned release archive, verify against the release's `checksums.txt` (sha256), extract into gitignored `deps/` |
-| `CMakeLists.txt` | Offline-first build consuming `deps/`; builds the demo, the examples tour, and the golden-suite port; installs a `corvid.pc` |
-| `examples/demo.c` | A small idiomatic consumer: open, insert, query, print (~20 symbols) |
-| `examples/{quickstart,hybrid,vector_index,text_search,graph,geo}.c` | The examples tour — one runnable program per concept, each a ctest on every CI leg |
-| `test/golden.c` | The golden-suite port — replays the engine's 267-line fixture suite against the downloaded libcorvid |
-
 ## Quick start
 
 Requirements: a C11 compiler, CMake ≥ 3.28, `curl` + `shasum`/`sha256sum`
 (macOS/Linux) or PowerShell 5+ (Windows).
 
 ```sh
-./fetch.sh                     # download + verify corvid v0.3.2 into deps/
+./fetch.sh                     # download + verify corvid v0.4.1 into deps/
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build --output-on-failure   # golden suite + demo + examples
@@ -696,7 +686,7 @@ pkg-config --cflags --libs corvid
 ## Versioning
 
 The engine pin lives in one variable in the fetch scripts
-(`CORVID_VERSION=v0.3.2`). Artifacts are always taken from that exact tag's
+(`CORVID_VERSION=v0.4.1`). Artifacts are always taken from that exact tag's
 GitHub release and sha256-verified; `deps/` is never committed.
 
 ## The macOS note (a bindings-program war story)
