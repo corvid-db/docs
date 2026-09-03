@@ -93,11 +93,17 @@ corvid is consumed four ways:
    [`corvid-node`](https://www.npmjs.com/package/corvid-node) and
    [`corvid-js`](https://www.npmjs.com/package/corvid-js) on npm,
    [`corvid-python`](https://pypi.org/project/corvid-python/) on PyPI,
-   [`corvid`](https://pub.dev/packages/corvid) on pub.dev, and
+   [`corvid`](https://pub.dev/packages/corvid) on pub.dev,
    [`corvid/php-corvid`](https://packagist.org/packages/corvid/php-corvid)
-   on Packagist (installed with PIE). The full matrix — including the
-   artifact-consuming C/Go/C++/Zig/JVM bindings — is the
-   [bindings overview](/bindings/overview/).
+   on Packagist (installed with PIE), and
+   `io.github.corvid-db:corvid-jvm` (JVM) plus
+   `io.github.corvid-db:corvid-android` (the Android AAR) on
+   [Maven Central](https://central.sonatype.com/namespace/io.github.corvid-db).
+   On Apple platforms, [corvid-swift](/bindings/corvid-swift/) installs
+   by Swift Package URL (the tag is the release):
+   `.package(url: "https://github.com/corvid-db/corvid-swift.git", from: "0.4.1")`.
+   The full matrix — including the artifact-consuming C/Go/C++/Zig
+   bindings — is the [bindings overview](/bindings/overview/).
 4. **In the browser** — `npm i corvid-js`: the engine compiled to wasm,
    synchronous in-memory OOP plus async OPFS persistence (see
    [corvid-js](/bindings/corvid-js/)).
@@ -114,7 +120,7 @@ dependency to an exact release tag instead:
 
 ```toml
 [dependencies]
-corvid-db = { git = "https://github.com/corvid-db/corvid", tag = "v0.4.0" }
+corvid-db = { git = "https://github.com/corvid-db/corvid", tag = "v0.4.1" }
 ```
 
 Requires stable Rust, 2024 edition, MSRV **1.88**. The default build has no
@@ -146,6 +152,14 @@ cdylib, `corvid.h`, and golden fixtures, with sha256 entries in
   v0.2.1)
 - Windows: `corvid.dll` plus its MSVC import library `corvid.dll.lib` —
   link the import lib, place the DLL on the loader path
+
+Since v0.4.1 the mobile sets ship on the same releases: the Android
+cdylib archives for `aarch64-linux-android` (arm64-v8a) and
+`x86_64-linux-android` (same tarball shape — cdylib + `corvid.h` +
+golden fixtures; consumed by the corvid-android AAR) and the
+`corvid-swift-<tag>.zip` holding the `CorvidEngine.xcframework`
+(iOS device + fat iOS-simulator + fat macOS staticlib slices) that the
+corvid-swift SPM package pins as its binary target.
 
 The contract these artifacts implement is [the C ABI](/ffi/overview/) specification.
 [`corvid-c`](/bindings/corvid-c/) shows the full consumption pattern: fetch a
@@ -6439,8 +6453,8 @@ to the wrapper types.
 
 ```kotlin
 dependencies {
-    implementation("io.github.corvid-db:corvid-jvm:0.4.0")
-    runtimeOnly("io.github.corvid-db:corvid-jvm:0.4.0:macos-arm64")
+    implementation("io.github.corvid-db:corvid-jvm:0.4.1")
+    runtimeOnly("io.github.corvid-db:corvid-jvm:0.4.1:macos-arm64")
     // classifiers: macos-arm64 | macos-x64 | linux-x64 | linux-arm64 | windows-x64
 }
 ```
@@ -6451,10 +6465,29 @@ the loader extracts both to a temp dir and `System.load()`s them, so a
 consumer needs nothing else (no fetch, no compiler, no
 `java.library.path`). The version rides the engine's release cascade.
 
+**Android:** the same wrapper ships as an AAR —
+`io.github.corvid-db:corvid-android` (published in the same release
+bundle, same version). ONE dependency, no classifier — the AAR
+carries the Kotlin classes plus `arm64-v8a` and `x86_64` `jniLibs`
+pairs (engine cdylib + JNI shim), `Corvid.load()` resolves them
+through Android's `nativeLibraryDir` automatically, and `minSdk` is
+26:
+
+```kotlin
+dependencies {
+    implementation("io.github.corvid-db:corvid-android:0.4.1")
+}
+```
+
+The API is identical (the SAME Kotlin sources, compiled against
+`android.jar`); the engine's Android cdylibs ship on the engine
+release since v0.4.1, and the on-device gate is the repo's
+instrumented smoke against the arm64 ATD emulator.
+
 Building from source instead (development):
 
 ```sh
-./fetch.sh                    # fetch + sha256-verify corvid v0.4.0
+./fetch.sh                    # fetch + sha256-verify corvid v0.4.1
 ./scripts/build-native.sh     # compile the JNI shim into build/native
 ./gradlew test                # the golden suite (267 executable lines)
 ./gradlew examples            # the six-example tour
@@ -7161,6 +7194,125 @@ Next: [corvid-go](/bindings/corvid-go/).
 
 
 ================================================================================
+# corvid-swift
+# /docs/bindings/corvid-swift/
+================================================================================
+
+[`corvid-swift`](https://github.com/corvid-db/corvid-swift) is the
+Swift binding for **Apple platforms** — iOS 13+ (device and simulator,
+arm64 + x86_64) and macOS 10.15+ (arm64 + x86_64). One Swift Package,
+installed by URL, nothing else: the wrapper calls the engine's frozen
+C ABI directly through the clang module formed from the prebuilt
+**`CorvidEngine.xcframework`** (iOS device + fat iOS-simulator + fat
+macOS staticlib slices) that every engine release publishes. The
+engine is **statically linked** — no dynamic loading, no symbol
+search paths — and the pin is double: the binary target's URL tag
+plus its sha256 checksum, both verified by the binding's release gate
+against the engine release's own checksums.
+
+**When to choose this binding:** your project is Swift on iOS or
+macOS and you want corvid embedded with the platform's own shape —
+`throws`/`CorvidError` carrying the engine's frozen error codes,
+`deinit`-based handle lifetimes, `Data` keys, `[String: Any?]`
+documents, and closures for scan/update (a throwing closure aborts
+the engine call and rethrows at the call site).
+
+## Install
+
+Swift Package Manager — the package URL is the repository:
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/corvid-db/corvid-swift.git", from: "0.4.1")
+]
+```
+
+```swift
+.target(name: "App", dependencies: [
+    .product(name: "Corvid", package: "corvid-swift"),
+])
+```
+
+Requires Xcode 16+ / a Swift 6 toolchain (the package itself builds
+in the Swift 5 language mode). No other dependencies. Platform scope:
+iOS + macOS slices ship today; watchOS/visionOS/tvOS are a recorded,
+additive follow-up in the binding's PLAN.
+
+## The API in one screen
+
+```swift
+import Corvid
+
+let db = try Corvid.openMemory()
+let docs = try db.collection("docs")
+
+try docs.insert(
+    Data("s1".utf8),
+    ["kind": "doc",
+     "body": "rust embedded database",
+     "v": [1.0, 0.0] as [Float]] as [String: Any?])
+
+let rows = Array(try docs.query()
+    .filter(try field("kind").eq("doc"))
+    .vector("v", [1.0, 0.0], k: 2, metric: .cosine)
+    .run())
+
+let phrase = Array(try docs.phraseSearch(
+    field: "body", phrase: "embedded database", k: 2))
+
+db.close() // deinit also closes; Db/Collection are thread-safe
+```
+
+Documents are Swift values: `[String: Any?]` maps and `[Any?]`
+arrays whose leaves are `Bool`, `Int`, `UInt` (by bit pattern),
+`Double`, `Float`, `String`, `Data`, and `[Float]` vectors — note
+that a bare `[1.0, 0.0]` inside a document literal infers `[Double]`
+and encodes as an *array*; vectors are `[Float]`, so write
+`[1.0, 0.0] as [Float]`. Keys are `Data`. NaNs cross bit-exact both
+ways.
+
+## The architecture ruling: SPM binary target, no shim
+
+Per the repo's `docs/PLAN.md`: Swift consumes C natively — unlike
+corvid-jvm, whose JNI demands a C shim, the wrapper
+(`Sources/Corvid`) imports `CorvidEngine` and calls the 124 frozen
+symbols directly. The xcframework carries `corvid.h` plus an umbrella
+and module map so SwiftPM forms the clang module; each slice is the
+engine's `staticlib` build (bare dylibs outside frameworks are not
+supported on iOS — static linking is the Rust-on-Apple norm).
+
+The lifetime mapping is the binding's review center-of-gravity:
+opaque handles → `final class`es with `deinit` frees; consumed-by-call
+args (predicate trees, query builders) invalidated **before** the
+native call whatever its outcome (FFI.md §8's unconditional
+consumption — the double-free class cannot happen); borrowed views
+copied inside the same call that observed them; `Db`/`Collection`
+are `@unchecked Sendable` exactly where the ABI's §6 thread contract
+says so, builders and iterators are not. Cursors (`Rows`, `GeoHits`,
+`Strs`, `GroupIter`) are single-pass — iterate once.
+
+## Correctness story
+
+The golden-suite port (`Tests/CorvidTests/GoldenTest.swift`) replays
+the engine's 8-fixture, 267-executable-line suite through this
+binding against the **downloaded** xcframework at the pin — same
+grammar, same dispatch, every line, first failure naming file:line.
+A deep integration pass covers the surfaces the fixture grammar does
+not reach (admin paths, scan aborts, graph, geo, schema, TTL, the
+full aggregate set), and a frozen error-code table test pins the
+19+1 code mapping. CI runs the suite on macOS plus an iOS-Simulator
+compile leg (the simulator slice links), and the surface gate
+resolves every engine construct at the pinned tag
+(`docs/SURFACE.tsv`: mapped with a proving test, or N/A with a
+reason).
+
+Releases ride the engine's cascade: engine tag `vX.Y.Z` → `from:
+"X.Y.Z"` here, with the manifest's URL and checksum rewritten in the
+same bump PR (`bump.sh` downloads the new zip and re-hashes it — a
+stale checksum would break every consumer's resolve).
+
+
+================================================================================
 # corvid-zig
 # /docs/bindings/corvid-zig/
 ================================================================================
@@ -7408,7 +7560,8 @@ binding's public API.
 | [corvid-zig](/bindings/corvid-zig/) | Zig (@cImport of the published cdylib) | live — golden-suite CI + examples tour (text search exercises the phrase API), move-safe handles and typed borrows, no Rust toolchain required |
 | [corvid-dart](/bindings/corvid-dart/) | Dart (dart:ffi + ffigen over the published cdylib) | live — golden-suite CI + examples tour + an ffigen drift gate, Db/Collection/Query with NativeFinalizer backstops, no Rust toolchain required; **pub.dev** `corvid` |
 | [corvid-php](/bindings/corvid-php/) | PHP (native extension over the published cdylib) | live — golden-suite CI (NTS 8.4/8.3 + a linux ZTS leg) + examples tour, refcounted handle lifetimes with the honest FPM story; **Packagist** `corvid/php-corvid`, installed with PIE |
-| [corvid-jvm](/bindings/corvid-jvm/) | Kotlin/Java (JNI shim over the published cdylib) | live — golden-suite CI (linux/macos/windows × JDK 21/17) + examples tour, Kotlin-first API with `AutoCloseable` handles and `CorvidException`, Java consumes the same artifact; **Maven Central** `io.github.corvid-db:corvid-jvm` (self-contained per-platform jars) |
+| [corvid-jvm](/bindings/corvid-jvm/) | Kotlin/Java (JNI shim over the published cdylib) + Android | live — golden-suite CI (linux/macos/windows × JDK 21/17) + examples tour, Kotlin-first API with `AutoCloseable` handles and `CorvidException`, Java consumes the same artifact; **Maven Central** `io.github.corvid-db:corvid-jvm` (self-contained per-platform jars) and `io.github.corvid-db:corvid-android` (the AAR — same wrapper, `arm64-v8a`/`x86_64` jniLibs, minSdk 26) |
+| [corvid-swift](/bindings/corvid-swift/) | Swift on Apple platforms (iOS 13+ device/simulator, macOS; over the published xcframework, no shim) | live — golden-suite CI (267/267 on macOS) + iOS-Simulator compile leg + surface gate; installed by SPM package URL, the tag IS the release (binary target checksum-pinned) |
 | corvid (Rust) | Rust | the engine itself — **crates.io** `corvid-db`, native API |
 
 Every live binding ships the same **examples tour** — six runnable
@@ -7446,13 +7599,13 @@ Next: [corvid-c](/bindings/corvid-c/).
 ================================================================================
 
 <!-- GENERATED FILE — do not edit by hand. Source: the engine's
-     docs/SYNTAX.md at tag v0.4.0, itself generated from the conformance
+     docs/SYNTAX.md at tag v0.4.1, itself generated from the conformance
      surface manifests (crates/corvid/tests/surface/mod.rs and
      crates/corvid-mcp/tests/surface/mod.rs). Regenerate with
-     scripts/sync-from-engine.sh v0.4.0 — CI verifies the committed copy
+     scripts/sync-from-engine.sh v0.4.1 — CI verifies the committed copy
      matches the pinned tag (see .engine-pin). -->
 
-> **generated — synced from the engine at v0.4.0.** This page lists the
+> **generated — synced from the engine at v0.4.1.** This page lists the
 > complete writable surface of `corvid` and `corvid-mcp`: every public
 > construct grouped by statement class (the SQL analogue is a guide, not a
 > promise), each with the integration tests that pin its
@@ -7944,11 +8097,11 @@ constraints): NaN equals NaN regardless of payload, and `-0.0` equals
 ================================================================================
 
 <!-- GENERATED FILE — do not edit by hand. Source: the engine's
-     docs/FFI.md §1.3 frozen code table at tag v0.4.0. Regenerate with
-     scripts/sync-from-engine.sh v0.4.0 — CI verifies the committed copy
+     docs/FFI.md §1.3 frozen code table at tag v0.4.1. Regenerate with
+     scripts/sync-from-engine.sh v0.4.1 — CI verifies the committed copy
      matches the pinned tag (see .engine-pin). -->
 
-> **generated — synced from the engine at v0.4.0.** The detailed codes
+> **generated — synced from the engine at v0.4.1.** The detailed codes
 > returned by `corvid_last_error_code()`. Value 0 means "no error recorded
 > on this thread". Codes 1–18 map 1:1 onto the engine's
 > `corvid::Error` variants (pinned by the variant-inventory snapshot

@@ -51,8 +51,8 @@ to the wrapper types.
 
 ```kotlin
 dependencies {
-    implementation("io.github.corvid-db:corvid-jvm:0.4.0")
-    runtimeOnly("io.github.corvid-db:corvid-jvm:0.4.0:macos-arm64")
+    implementation("io.github.corvid-db:corvid-jvm:0.4.1")
+    runtimeOnly("io.github.corvid-db:corvid-jvm:0.4.1:macos-arm64")
     // classifiers: macos-arm64 | macos-x64 | linux-x64 | linux-arm64 | windows-x64
 }
 ```
@@ -63,10 +63,29 @@ the loader extracts both to a temp dir and `System.load()`s them, so a
 consumer needs nothing else (no fetch, no compiler, no
 `java.library.path`). The version rides the engine's release cascade.
 
+**Android:** the same wrapper ships as an AAR —
+`io.github.corvid-db:corvid-android` (published in the same release
+bundle, same version). ONE dependency, no classifier — the AAR
+carries the Kotlin classes plus `arm64-v8a` and `x86_64` `jniLibs`
+pairs (engine cdylib + JNI shim), `Corvid.load()` resolves them
+through Android's `nativeLibraryDir` automatically, and `minSdk` is
+26:
+
+```kotlin
+dependencies {
+    implementation("io.github.corvid-db:corvid-android:0.4.1")
+}
+```
+
+The API is identical (the SAME Kotlin sources, compiled against
+`android.jar`); the engine's Android cdylibs ship on the engine
+release since v0.4.1, and the on-device gate is the repo's
+instrumented smoke against the arm64 ATD emulator.
+
 Building from source instead (development):
 
 ```sh
-./fetch.sh                    # fetch + sha256-verify corvid v0.4.0
+./fetch.sh                    # fetch + sha256-verify corvid v0.4.1
 ./scripts/build-native.sh     # compile the JNI shim into build/native
 ./gradlew test                # the golden suite (267 executable lines)
 ./gradlew examples            # the six-example tour

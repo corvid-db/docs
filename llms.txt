@@ -12,7 +12,7 @@
 
 ## Start
 
-- [Install](/docs/start/install/): How to install corvid — crates.io for Rust, the C ABI artifacts from GitHub releases, and the published language bindings (npm, PyPI, pub.dev, Packagist); feature flags and platform support.
+- [Install](/docs/start/install/): How to install corvid — crates.io for Rust, the C ABI artifacts from GitHub releases, and the published language bindings (npm, PyPI, pub.dev, Packagist, Maven Central); feature flags and platform support.
 - [What is corvid?](/docs/start/what-is-corvid/): corvid's design in one page — an embedded multi-modal store with a fluent builder API, one transactional core, and no SQL, networking, or serialization on the query path.
 
 ## Tutorial
@@ -114,8 +114,9 @@
 - [corvid-node](/docs/bindings/corvid-node/): The corvid-node Node.js binding — install (pending first npm publish), OOP usage with Db/Collection/Query/field, the JS value mapping, the quickstart and hybrid examples, error handling and the golden-suite correctness story.
 - [corvid-php](/docs/bindings/corvid-php/): The corvid-php binding — a native PHP extension in C over the published FFI artifacts, Corvid\Db / Corvid\Collection / fluent Corvid\Query, Corvid\Exception with the engine error table, the honest FPM/ZTS lifecycle story, and the golden-suite correctness floor.
 - [corvid-python](/docs/bindings/corvid-python/): The corvid-python binding — install (pending first PyPI release), Db/Collection/Query/field OOP with context-manager lifetimes, the Python value mapping, the quickstart and hybrid examples, and the golden-suite correctness story.
+- [corvid-swift](/docs/bindings/corvid-swift/): The corvid-swift binding — the Swift package for Apple platforms (iOS 13+ device/simulator, macOS) over the engine's prebuilt CorvidEngine.xcframework, no shim (Swift consumes the C ABI directly), throws + CorvidError with the frozen engine codes, and the golden-suite correctness story.
 - [corvid-zig](/docs/bindings/corvid-zig/): The corvid-zig binding — Zig over the published FFI artifacts via @cImport, Db/Collection/Query structs with deinit, Zig error sets, move semantics for consumed handles, typed borrows, and the golden-suite correctness story.
-- [Bindings ecosystem](/docs/bindings/overview/): Language bindings for corvid — eleven live (corvid-c reference consumer, corvid-node, corvid-python, corvid-go, corvid-js in the browser via WebAssembly with OPFS persistence, corvid-cpp with RAII over the C ABI, corvid-zig over the C ABI with Zig error unions, corvid-dart over the C ABI with dart:ffi + ffigen, corvid-php as a native PHP extension over the C ABI, corvid-jvm — Kotlin-first over the C ABI via a JNI shim, Java consumes the same artifact, and the engine itself on crates.io), each with a runnable six-example tour and registry-published where the language has one.
+- [Bindings ecosystem](/docs/bindings/overview/): Language bindings for corvid — twelve live (corvid-c reference consumer, corvid-node, corvid-python, corvid-go, corvid-js in the browser via WebAssembly with OPFS persistence, corvid-cpp with RAII over the C ABI, corvid-zig over the C ABI with Zig error unions, corvid-dart over the C ABI with dart:ffi + ffigen, corvid-php as a native PHP extension over the C ABI, corvid-jvm — Kotlin-first over the C ABI via a JNI shim, Java consumes the same artifact — plus its corvid-android AAR, corvid-swift for Apple platforms over the published xcframework, and the engine itself on crates.io), each with a runnable six-example tour and registry-published where the language has one.
 
 ## Reference
 
