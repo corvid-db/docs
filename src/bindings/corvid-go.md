@@ -62,7 +62,7 @@ Six runnable programs under the repo's `examples/` directory (`go run
 (in-memory / on-disk / binary-quantized HNSW vs the exact scan),
 **text-search** (BM25 incl. CJK bigram segmentation, plus the v0.3.0 direct `PhraseSearch`), **graph**
 (neighbors/traverse + delete cascade), and **geo** (radius / bbox /
-nearest). The quickstart and hybrid sources are embedded below — imported
+nearest). All six sources are embedded below — imported
 from the repo so they cannot drift from what CI executes
 (`scripts/sync-binding-examples.sh`; the drift gate reddens docs CI if
 they diverge).
@@ -168,9 +168,323 @@ func main() {
 ```
 
 <!-- corvid-examples:hybrid END -->
+### Vector indexes (ANN vs exact)
+
+<!-- corvid-examples:vector_index BEGIN -->
+
+```go
+func main() {
+	path := filepath.Join(os.TempDir(), "corvid-go-example-vector-index.redb")
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		panic(err)
+	} // reruns start clean (single-file db)
+
+	db, err := corvid.Open(path)
+	if err != nil {
+		panic(err)
+	}
+	items, err := db.Collection("items")
+	if err != nil {
+		panic(err)
+	}
+	for _, c := range corpus {
+		must(items.Insert([]byte(c.key), map[string]any{
+			"v_mem": c.v, "v_disk": c.v, "v_q": c.v,
+		}))
+	}
+	must(items.CreateVectorIndex("v_mem", corvid.MetricCosine))
+	must(items.CreateVectorIndexOnDisk("v_disk", corvid.MetricCosine))
+	must(items.CreateVectorIndexQuantized("v_q", corvid.MetricCosine, corvid.QuantBinary))
+
+	fmt.Println("top-4 nearest to (1,0,0,0) under cosine:")
+	runQuery(items, "v_mem", false, "exact (scan):")
+	runQuery(items, "v_mem", true, "ann in-memory HNSW:")
+	runQuery(items, "v_disk", true, "ann on-disk HNSW:")
+	runQuery(items, "v_q", true, "ann binary-quantized:")
+	fmt.Println("(the quantized lane trades recall for a ~32x smaller index)")
+
+	items.Close()
+	must(db.Close())
+
+	// Reopen: the on-disk graph reloads (no rebuild) and answers again.
+	db, err = corvid.Open(path)
+	if err != nil {
+		panic(err)
+	}
+	items, err = db.Collection("items")
+	if err != nil {
+		panic(err)
+	}
+	runQuery(items, "v_disk", true, "ann on-disk after reopen:")
+	items.Close()
+	must(db.Close())
+
+	must(os.Remove(path))
+}
+```
+
+<!-- corvid-examples:vector_index END -->
+### Text search (BM25, CJK, phrases)
+
+<!-- corvid-examples:text_search BEGIN -->
+
+```go
+func main() {
+	db, err := corvid.OpenMemory()
+	if err != nil {
+		panic(err)
+	}
+	defer func() { must(db.Close()) }()
+
+	notes, err := db.Collection("notes")
+	if err != nil {
+		panic(err)
+	}
+	defer notes.Close()
+
+	for _, n := range corpus {
+		must(notes.Insert([]byte(n.key), map[string]any{"body": n.body}))
+	}
+	must(notes.CreateTextIndex("body"))
+
+	search(notes, "quick fox", `bm25 "quick fox":`)
+	search(notes, "quick dog", `bm25 "quick dog":`)
+	search(notes, "城市", "bm25 CJK 城市 (city):")
+	search(notes, "数据库", "bm25 CJK 数据库 (database):")
+
+	phrase(notes, "fox jumps over", `phrase "fox jumps over":`)
+	phrase(notes, "over jumps fox", `phrase "over jumps fox" (reversed — no match):`)
+	phrase(notes, "leaps over a sleeping", `phrase with stop words collapsed:`)
+}
+```
+
+<!-- corvid-examples:text_search END -->
+### Graph (neighbors, traverse, delete cascade)
+
+<!-- corvid-examples:graph BEGIN -->
+
+```go
+func main() {
+	db, err := corvid.OpenMemory()
+	if err != nil {
+		panic(err)
+	}
+	defer func() { must(db.Close()) }()
+
+	nodes, err := db.Collection("nodes")
+	if err != nil {
+		panic(err)
+	}
+	defer nodes.Close()
+
+	for _, key := range []string{"ga", "gb", "gc"} {
+		must(nodes.Insert([]byte(key), map[string]any{"n": key}))
+	}
+
+	must(nodes.Link([]byte("ga"), "parent_of", []byte("gb")))
+	must(nodes.Link([]byte("ga"), "parent_of", []byte("gc")))
+	must(nodes.Link([]byte("gb"), "parent_of", []byte("gd"))) // gd never exists as a document
+	must(nodes.LinkWeighted([]byte("ga"), "route", []byte("gb"), 2.5))
+	must(nodes.LinkWeighted([]byte("ga"), "route", []byte("gd"), 0.75))
+
+	ga, gb := []byte("ga"), []byte("gb")
+
+	if nb, err := nodes.Neighbors(ga, "parent_of"); err != nil {
+		panic(err)
+	} else {
+		show("neighbors(ga)", nb)
+	}
+	if in, err := nodes.InNeighbors(gb, "parent_of"); err != nil {
+		panic(err)
+	} else {
+		show("in_neighbors(gb)", in)
+	}
+	if routes, err := nodes.NeighborsWeighted(ga, "route"); err != nil {
+		panic(err)
+	} else {
+		parts := make([]string, len(routes))
+		for i, r := range routes {
+			parts[i] = fmt.Sprintf("%s=%.2f", r.Key, r.Weight)
+		}
+		fmt.Printf("%-36s [%s]\n", "routes from ga (weighted):", strings.Join(parts, " "))
+	}
+	if tr, err := nodes.Traverse(ga, "parent_of", 1); err != nil {
+		panic(err)
+	} else {
+		show("traverse(ga, 1 hop)", tr)
+	}
+	if tr, err := nodes.Traverse(ga, "parent_of", 2); err != nil {
+		panic(err)
+	} else {
+		show("traverse(ga, 2 hops)", tr)
+	}
+
+	// Delete cascade: remove gc (a document) and gd (never a document).
+	if existed, err := nodes.Delete([]byte("gc")); err != nil {
+		panic(err)
+	} else {
+		fmt.Println("delete gc: existed =", existed)
+	}
+	if existed, err := nodes.Delete([]byte("gd")); err != nil {
+		panic(err)
+	} else {
+		fmt.Println("delete gd: existed =", existed,
+			"(never a document; its edges still cascade)")
+	}
+
+	if nb, err := nodes.Neighbors(ga, "parent_of"); err != nil {
+		panic(err)
+	} else {
+		show("neighbors(ga) after deletes", nb)
+	}
+	if nb, err := nodes.Neighbors(gb, "parent_of"); err != nil {
+		panic(err)
+	} else {
+		show("neighbors(gb) after deletes", nb)
+	}
+	if tr, err := nodes.Traverse(ga, "parent_of", 2); err != nil {
+		panic(err)
+	} else {
+		show("traverse(ga, 2 hops) after", tr)
+	}
+}
+```
+
+<!-- corvid-examples:graph END -->
+### Geo (radius, bbox, nearest)
+
+<!-- corvid-examples:geo BEGIN -->
+
+```go
+func main() {
+	db, err := corvid.OpenMemory()
+	if err != nil {
+		panic(err)
+	}
+	defer func() { must(db.Close()) }()
+
+	places, err := db.Collection("places")
+	if err != nil {
+		panic(err)
+	}
+	defer places.Close()
+
+	for _, c := range cities {
+		must(places.Insert([]byte(c.name), map[string]any{
+			"name": c.name,
+			"loc":  []any{c.lat, c.lon}, // the [lat, lon] array encoding
+		}))
+	}
+	must(places.CreateGeoIndex("loc"))
+
+	hits, err := places.GeoWithinRadius("loc", 52.52, 13.40, 600.0)
+	show("within 600km of Berlin:", hits, err)
+	hits, err = places.GeoWithinBBox("loc", 47, 5, 55, 15)
+	show("bbox 47..55N, 5..15E:", hits, err)
+	hits, err = places.GeoNearest("loc", 52.52, 13.40, 2)
+	show("nearest 2 to Berlin:", hits, err)
+}
+```
+
+<!-- corvid-examples:geo END -->
+
+
+
+
 
 The fused scores are RRF rank sums: `s1` is rank 1 of both sources
 (1/61 + 1/61 = 2/61 ≈ 0.032787), `s3` rank 2 of both (2/62 ≈ 0.032258).
+
+## API at a glance
+
+Generated from the binding's `docs/SURFACE.tsv` (every engine
+construct at the pinned tag mapped or N/A with a reason) — regenerated
+by the docs sync, so it cannot drift.
+
+<!-- corvid-api-glance BEGIN -->
+
+| API group | engine constructs | proven by |
+|---|---|---|
+| `the Go value mapping (nil/bool/int64/float64/string/[]byte/[]float32/[]any/map[string]any)` | 10 | golden:values.txt:VTYPE |
+| `FieldExpr.Eq/Ne/Lt/Le/Gt/Ge` | 7 | golden:queries.txt:QF_* |
+| `Predicate via Field()/Not()` | 27 | golden:queries.txt:QF_* + golden:mutations.txt:DELETE_IN |
+| `Metric type (MetricCosine/MetricDot/MetricL2)` | 4 | golden:queries.txt:QVEC |
+| `Quant type (QuantNone/QuantBinary/QuantScalar)` | 4 | golden:schema.txt:IDX_VEC_Q |
+| `returns *CorvidError` | 1 | golden:mutations.txt:INSERT_ERR |
+| `CorvidError.Code() (ErrCode table)` | 1 | TestErrorCodeTable |
+| `ErrDatabase (code 1)` | 1 | TestErrorCodeTable |
+| `ErrTransaction (code 2)` | 1 | TestErrorCodeTable |
+| `ErrTable (code 3)` | 1 | TestErrorCodeTable |
+| `ErrStorage (code 4)` | 1 | TestErrorCodeTable |
+| `ErrCommit (code 5)` | 1 | TestErrorCodeTable |
+| `ErrSetDurability (code 6)` | 1 | TestErrorCodeTable |
+| `ErrCompaction (code 7)` | 1 | TestErrorCodeTable |
+| `ErrDecode (code 8)` | 1 | TestErrorCodeTable |
+| `ErrCorruptIndex (code 9)` | 1 | TestErrorCodeTable |
+| `ErrReservedCollection (code 10)` | 1 | TestErrorCodeTable; golden:mutations.txt:INSERT_ERR(err:10) |
+| `ErrInvalidName (code 11)` | 1 | TestErrorCodeTable; golden:mutations.txt:INSERT_ERR(err:11) |
+| `ErrArgument (code 12)` | 1 | TestErrorCodeTable; golden:mutations.txt:UPDATE_ABORT(err:12) |
+| `ErrIncompatibleFormat (code 13)` | 1 | TestErrorCodeTable |
+| `ErrEmptyIndexTraining (code 14)` | 1 | TestErrorCodeTable; golden:schema.txt:IDX_PQ_ERR(err:14) |
+| `ErrSchemaViolation (code 15)` | 1 | TestErrorCodeTable; golden:schema.txt:SCHEMA_ERR(err:15) |
+| `ErrInvalidDump (code 16)` | 1 | TestErrorCodeTable |
+| `ErrBackupTargetExists (code 17)` | 1 | TestErrorCodeTable; golden:admin.txt:BACKUP_DUP(err:17) |
+| `ErrIO (code 18)` | 1 | TestErrorCodeTable |
+| `Row { Key, Doc, Score }` | 1 | golden:queries.txt |
+| `Query (Collection.Query())` | 2 | golden:queries.txt |
+| `Query.Filter` | 1 | golden:queries.txt:QF_COUNT |
+| `Query.Vector` | 1 | golden:queries.txt:QVEC |
+| `Query.Text` | 1 | golden:queries.txt:QTEXT |
+| `Query.FuseRRF` | 1 | golden:queries.txt:HYBRID_F |
+| `Query.RerankMMR` | 1 | golden:queries.txt:HYBRID |
+| `Query.Limit` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.Offset` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.OrderBy` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.Approx` | 1 | golden:queries.txt:APPROX |
+| `Query.Select` | 1 | golden:queries.txt:SELECT |
+| `Query.Count` | 1 | golden:queries.txt:AGG_COUNT |
+| `Query.GroupCount` | 1 | golden:queries.txt:AGG_GCOUNT |
+| `Query.Sum` | 1 | golden:queries.txt:AGG_SUM |
+| `Query.Avg` | 1 | golden:queries.txt:AGG_AVG |
+| `Query.Min` | 1 | golden:queries.txt:AGG_MIN |
+| `Query.Max` | 1 | golden:queries.txt:AGG_MAX |
+| `Query.CountDistinct` | 1 | golden:queries.txt:AGG_DISTINCT |
+| `Query.GroupSum` | 1 | golden:queries.txt:AGG_GSUM |
+| `Query.GroupAvg` | 1 | golden:queries.txt:AGG_GAVG |
+| `Query.Run` | 1 | golden:queries.txt:QVEC |
+| `Db` | 1 | golden:admin.txt:FILEDB |
+| `Db.Open/OpenMemory/Collection/Collections/Backup/Compact` | 6 | golden:admin.txt (COLLECTIONS/BACKUP/COMPACT) |
+| `Collection` | 1 | golden:mutations.txt:COLL |
+| `Collection.Insert/Update/Patch/CompareAndSet` | 4 | golden:mutations.txt (INSERT/UPDATE/PATCH/CAS) |
+| `Collection.Scan(callback, early stop)` | 1 | golden:mutations.txt:SCAN/SCAN_STOP |
+| `Collection.Len (Len()==0 for empty)` | 2 | golden:mutations.txt:LEN |
+| `Collection.PutMany` | 1 | golden:mutations.txt:PUTMANY + golden:schema.txt:PUTMANY_ROLLBACK |
+| `Collection.InsertAuto` | 1 | golden:mutations.txt:INSERT_AUTO |
+| `Collection.Get` | 1 | golden:mutations.txt:GET |
+| `Collection.Delete/DeleteWhere/DeleteBatch` | 3 | golden:mutations.txt (DELETE/DELETE_WHERE/DELETE_BATCH) |
+| `Collection.Scan` | 1 | golden:mutations.txt:SCAN |
+| `Collection.Page / (rows, next)` | 2 | golden:mutations.txt:PAGE |
+| `Row.Score (Query.Vector().Run())` | 1 | golden:queries.txt:QVEC |
+| `Row.Score (Query.Text().Run())` | 1 | golden:queries.txt:QTEXT |
+| `(*Collection).PhraseSearch(field, phrase, k) — the direct positional search (corvid_phrase_search, v0.3.0) over the rows cursor` | 1 | golden:queries.txt:PHRASE |
+| `Query.FuseRRF default k=60` | 1 | golden:queries.txt:HYBRID |
+| `GeoHit { Key, Doc, DistanceKm }` | 1 | golden:geo.txt:RADIUS/NEAREST/BBOX |
+| `Collection.GeoWithinRadius/GeoNearest/GeoWithinBBox/CreateGeoIndex` | 4 | golden:geo.txt (RADIUS/NEAREST/BBOX/IDX_GEO) |
+| `Collection.Link/LinkWeighted/Unlink/Neighbors/InNeighbors/NeighborsWeighted/Traverse` | 7 | golden:graph.txt |
+| `Collection.CreateScalarIndex/CreateCompoundIndex/CreateTextIndex[/OnDisk]/CreateGeoIndex/CreateVectorIndex* (6 variants)` | 10 | golden:schema.txt:IDX_* |
+| `FieldType enum (FieldAny/FieldBool/FieldInt/FieldFloat/FieldText/FieldBytes/FieldVector/FieldArray/FieldMap)` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA |
+| `Collection.SetSchema/Schema + FieldDef { Name, Type, Required, Unique }` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA/SCHEMA_ERR |
+| `Collection.InsertTTL/SetTTL/GetTTL/PurgeExpired` | 4 | golden:mutations.txt (INSERT_TTL/SET_TTL/GET_TTL/PURGE) |
+| `Db.Dump/Load/LoadWithRenames` | 3 | golden:admin.txt (DUMP/LOAD/LOAD_RENAMES) |
+
+159 engine constructs are deliberately not exposed (each with its reason in the repo's `docs/SURFACE.tsv`).
+
+<!-- corvid-api-glance END -->
+
+## API reference
+
+godoc renders the package from its doc comments: [pkg.go.dev/github.com/corvid-db/corvid-go](https://pkg.go.dev/github.com/corvid-db/corvid-go) — also `go doc` locally.
+
 
 ## Value mapping
 

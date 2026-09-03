@@ -5507,6 +5507,373 @@ int main(void) {
 ```
 
 <!-- corvid-examples:hybrid END -->
+### Vector indexes (ANN vs exact)
+
+<!-- corvid-examples:vector_index BEGIN -->
+
+```c
+static void put_doc(corvid_coll *items, const char *key, const float *v) {
+    corvid_value *doc = corvid_value_map_new();
+    must("map_put v_mem", corvid_value_map_put(
+        doc, "v_mem", 5, corvid_value_vector(v, 4)));
+    must("map_put v_disk", corvid_value_map_put(
+        doc, "v_disk", 6, corvid_value_vector(v, 4)));
+    must("map_put v_q",
+         corvid_value_map_put(doc, "v_q", 3, corvid_value_vector(v, 4)));
+    must("insert", corvid_insert(items, (const uint8_t *)key, strlen(key), doc));
+    corvid_value_free(doc);
+}
+
+/* Run a top-4 vector query over `field`, print its ranked keys. */
+static void run_query(corvid_coll *items, const char *field, int approx,
+                      const char *label) {
+    corvid_query *q = corvid_query_new(items);
+    if (!q) { fprintf(stderr, "vector_index: query_new failed\n"); exit(1); }
+    static const float probe[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+    must("query_vector",
+         corvid_query_vector(q, field, strlen(field), probe, 4, 4,
+                             CORVID_METRIC_COSINE));
+    if (approx) must("query_approx", corvid_query_approx(q));
+    corvid_rows *rows = corvid_query_run(q);
+    if (!rows) {
+        size_t len = 0;
+        const char *msg = corvid_last_error_message(&len);
+        fprintf(stderr, "vector_index: query_run failed: %.*s\n", (int)len,
+                msg);
+        exit(1);
+    }
+    printf("%-38s", label);
+    for (;;) {
+        const uint8_t *key = NULL;
+        size_t key_len = 0;
+        const corvid_value *doc = NULL;
+        float score = 0.0f;
+        if (corvid_rows_next(rows, &key, &key_len, &doc, &score) != 1) break;
+        printf(" %.*s(%.6f)", (int)key_len, key, (double)score);
+    }
+    printf("\n");
+    corvid_rows_free(rows);
+}
+
+int main(void) {
+    remove(DB_FILE); /* reruns start clean (single-file db) */
+
+    static const float vecs[8][4] = {
+        {1.0f, 0.0f, 0.0f, 0.0f},   /* k0 — nearest */
+        {0.95f, 0.05f, 0.0f, 0.0f}, /* k1 */
+        {0.0f, 1.0f, 0.0f, 0.0f},   /* k2 */
+        {0.0f, 0.9f, 0.1f, 0.0f},   /* k3 */
+        {0.0f, 0.0f, 1.0f, 0.0f},   /* k4 */
+        {0.7f, 0.7f, 0.0f, 0.0f},   /* k5 */
+        {0.0f, 0.0f, 0.0f, 1.0f},   /* k6 */
+        {0.98f, 0.02f, 0.0f, 0.0f}, /* k7 */
+    };
+    static const char *keys[8] = {"k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7"};
+
+    corvid_db *db = corvid_open(DB_FILE, strlen(DB_FILE));
+    if (!db) { fprintf(stderr, "vector_index: open failed\n"); return 1; }
+    corvid_coll *items = corvid_collection(db, "items", 5);
+    if (!items) { fprintf(stderr, "vector_index: collection failed\n"); return 1; }
+
+    for (int i = 0; i < 8; i++) put_doc(items, keys[i], vecs[i]);
+
+    must("create_vector_index (in-memory)",
+         corvid_create_vector_index(items, "v_mem", 5, CORVID_METRIC_COSINE));
+    must("create_vector_index_ondisk",
+         corvid_create_vector_index_ondisk(items, "v_disk", 6,
+                                           CORVID_METRIC_COSINE));
+    must("create_vector_index_quantized (binary)",
+         corvid_create_vector_index_quantized(items, "v_q", 3,
+                                              CORVID_METRIC_COSINE,
+                                              CORVID_QUANT_BINARY));
+
+    printf("top-4 nearest to (1,0,0,0) under cosine:\n");
+    run_query(items, "v_mem", 0, "exact (scan):");
+    run_query(items, "v_mem", 1, "ann in-memory HNSW:");
+    run_query(items, "v_disk", 1, "ann on-disk HNSW:");
+    run_query(items, "v_q", 1, "ann binary-quantized:");
+    printf("(the quantized lane trades recall for a ~32x smaller index)\n");
+
+    corvid_collection_free(items);
+    must("close", corvid_close(db));
+
+    /* Reopen: the on-disk graph reloads (no rebuild) and answers again. */
+    db = corvid_open(DB_FILE, strlen(DB_FILE));
+    if (!db) { fprintf(stderr, "vector_index: reopen failed\n"); return 1; }
+    items = corvid_collection(db, "items", 5);
+    if (!items) { fprintf(stderr, "vector_index: recollection failed\n"); return 1; }
+    run_query(items, "v_disk", 1, "ann on-disk after reopen:");
+    corvid_collection_free(items);
+    must("close", corvid_close(db));
+
+    remove(DB_FILE);
+    return 0;
+}
+```
+
+<!-- corvid-examples:vector_index END -->
+### Text search (BM25, CJK, phrases)
+
+<!-- corvid-examples:text_search BEGIN -->
+
+```c
+static void put_note(corvid_coll *notes, const char *key, const char *body) {
+    corvid_value *doc = corvid_value_map_new();
+    must("map_put body", corvid_value_map_put(
+        doc, "body", 4, corvid_value_text(body, strlen(body))));
+    must("insert", corvid_insert(notes, (const uint8_t *)key, strlen(key), doc));
+    corvid_value_free(doc);
+}
+
+static void phrase(corvid_coll *notes, const char *q, const char *label) {
+    corvid_rows *rows = corvid_phrase_search(notes, "body", 4, q, strlen(q), 3);
+    if (!rows) {
+        size_t len = 0;
+        const char *msg = corvid_last_error_message(&len);
+        fprintf(stderr, "text_search: phrase_search failed: %.*s\n", (int)len,
+                msg ? msg : "?");
+        exit(1);
+    }
+    printf("%-28s ->", label);
+    for (;;) {
+        const uint8_t *key = NULL;
+        size_t key_len = 0;
+        const corvid_value *doc = NULL;
+        float score = 0.0f;
+        if (corvid_rows_next(rows, &key, &key_len, &doc, &score) != 1) break;
+        printf(" %.*s(%.6f)", (int)key_len, key, (double)score);
+    }
+    printf("\n");
+    corvid_rows_free(rows);
+}
+
+static void search(corvid_coll *notes, const char *query, const char *label) {
+    corvid_query *q = corvid_query_new(notes);
+    if (!q) { fprintf(stderr, "text_search: query_new failed\n"); exit(1); }
+    must("query_text",
+         corvid_query_text(q, "body", 4, query, strlen(query), 3));
+    corvid_rows *rows = corvid_query_run(q);
+    if (!rows) {
+        size_t len = 0;
+        const char *msg = corvid_last_error_message(&len);
+        fprintf(stderr, "text_search: query_run failed: %.*s\n", (int)len, msg);
+        exit(1);
+    }
+    printf("%-28s ->", label);
+    for (;;) {
+        const uint8_t *key = NULL;
+        size_t key_len = 0;
+        const corvid_value *doc = NULL;
+        float score = 0.0f;
+        if (corvid_rows_next(rows, &key, &key_len, &doc, &score) != 1) break;
+        printf(" %.*s(%.6f)", (int)key_len, key, (double)score);
+    }
+    printf("\n");
+    corvid_rows_free(rows);
+}
+
+int main(void) {
+    corvid_db *db = corvid_open_memory();
+    if (!db) { fprintf(stderr, "text_search: open failed\n"); return 1; }
+    corvid_coll *notes = corvid_collection(db, "notes", 5);
+    if (!notes) { fprintf(stderr, "text_search: collection failed\n"); return 1; }
+
+    put_note(notes, "n1", "the quick brown fox jumps over the lazy dog");
+    put_note(notes, "n2", "a quick red fox leaps over a sleeping dog");
+    put_note(notes, "n3", "slow green turtle crosses the road");
+    put_note(notes, "n4", "东京是一座巨大的城市");   /* Tokyo is a huge city */
+    put_note(notes, "n5", "大阪是关西最大的城市");   /* Osaka is Kansai's biggest city */
+    put_note(notes, "n6", "机器学习正在改变数据库"); /* ML is changing databases */
+
+    must("create_text_index", corvid_create_text_index(notes, "body", 4));
+
+    search(notes, "quick fox", "bm25 \"quick fox\":");
+    search(notes, "quick dog", "bm25 \"quick dog\":");
+    search(notes, "城市", "bm25 CJK 城市 (city):");
+    search(notes, "数据库", "bm25 CJK 数据库 (database):");
+
+    phrase(notes, "fox jumps over", "phrase \"fox jumps over\":");
+    phrase(notes, "over jumps fox", "phrase reversed (no match):");
+    phrase(notes, "leaps over a sleeping", "phrase stop words collapsed:");
+
+    corvid_collection_free(notes);
+    must("close", corvid_close(db));
+    return 0;
+}
+```
+
+<!-- corvid-examples:text_search END -->
+### Graph (neighbors, traverse, delete cascade)
+
+<!-- corvid-examples:graph BEGIN -->
+
+```c
+/* Print one `[a,b,c]` line from a key-set cursor (borrowed views),
+ * naming the last error if the call failed. */
+static void print_strs(const char *label, corvid_strs *s) {
+    if (!s) {
+        size_t len = 0;
+        const char *msg = corvid_last_error_message(&len);
+        fprintf(stderr, "graph: %s failed: %.*s\n", label, (int)len, msg);
+        exit(1);
+    }
+    printf("%-36s [", label);
+    for (;;) {
+        const char *str = NULL;
+        size_t len = 0;
+        if (corvid_strs_next(s, &str, &len) != 1) break;
+        printf("%.*s ", (int)len, str);
+    }
+    printf("]\n");
+    corvid_strs_free(s);
+}
+
+int main(void) {
+    corvid_db *db = corvid_open_memory();
+    if (!db) { fprintf(stderr, "graph: open failed\n"); return 1; }
+    corvid_coll *nodes = corvid_collection(db, "nodes", 5);
+    if (!nodes) { fprintf(stderr, "graph: collection failed\n"); return 1; }
+
+    static const char *keys[3] = {"ga", "gb", "gc"};
+    for (int i = 0; i < 3; i++) {
+        corvid_value *doc = corvid_value_map_new();
+        must("map_put n", corvid_value_map_put(
+            doc, "n", 1, corvid_value_text(keys[i], strlen(keys[i]))));
+        must("insert",
+             corvid_insert(nodes, (const uint8_t *)keys[i], strlen(keys[i]), doc));
+        corvid_value_free(doc);
+    }
+
+    must("link ga->gb", corvid_link(nodes, (const uint8_t *)"ga", 2, "parent_of",
+                                    9, (const uint8_t *)"gb", 2));
+    must("link ga->gc", corvid_link(nodes, (const uint8_t *)"ga", 2, "parent_of",
+                                    9, (const uint8_t *)"gc", 2));
+    /* gb -> gd: gd never exists as a document; the edge dangles fine. */
+    must("link gb->gd", corvid_link(nodes, (const uint8_t *)"gb", 2, "parent_of",
+                                    9, (const uint8_t *)"gd", 2));
+    must("link_weighted ga->gb",
+         corvid_link_weighted(nodes, (const uint8_t *)"ga", 2, "route", 5,
+                              (const uint8_t *)"gb", 2, 2.5));
+    must("link_weighted ga->gd",
+         corvid_link_weighted(nodes, (const uint8_t *)"ga", 2, "route", 5,
+                              (const uint8_t *)"gd", 2, 0.75));
+
+    print_strs("neighbors(ga)",
+              corvid_neighbors(nodes, (const uint8_t *)"ga", 2,
+                                                "parent_of", 9));
+    print_strs("in_neighbors(gb)",
+              corvid_in_neighbors(nodes, (const uint8_t *)"gb", 2, "parent_of", 9));
+
+    corvid_geohits *routes = corvid_neighbors_weighted(
+        nodes, (const uint8_t *)"ga", 2, "route", 5);
+    if (!routes) { fprintf(stderr, "graph: neighbors_weighted failed\n"); return 1; }
+    printf("%-34s [", "routes from ga (weighted):");
+    for (;;) {
+        corvid_geohit hit;
+        const corvid_value *doc = NULL;
+        if (corvid_geohits_next(routes, &hit, &doc) != 1) break;
+        printf("%.*s=%.2f ", (int)hit.key_len, hit.key, hit.distance_km);
+    }
+    printf("]\n");
+    corvid_geohits_free(routes);
+
+    print_strs("traverse(ga, 1 hop)",
+              corvid_traverse(nodes, (const uint8_t *)"ga", 2, "parent_of", 9, 1));
+    print_strs("traverse(ga, 2 hops)",
+              corvid_traverse(nodes, (const uint8_t *)"ga", 2, "parent_of", 9, 2));
+
+    /* Delete cascade: remove gc (a document) and gd (never a document). */
+    int32_t existed = 0;
+    must("delete gc", corvid_delete(nodes, (const uint8_t *)"gc", 2, &existed));
+    printf("delete gc: existed=%d\n", existed);
+    must("delete gd", corvid_delete(nodes, (const uint8_t *)"gd", 2, &existed));
+    printf("delete gd: existed=%d (never a document; its edges still cascade)\n",
+           existed);
+
+    print_strs("neighbors(ga) after deletes",
+              corvid_neighbors(nodes, (const uint8_t *)"ga", 2, "parent_of", 9));
+    print_strs("neighbors(gb) after deletes",
+              corvid_neighbors(nodes, (const uint8_t *)"gb", 2, "parent_of", 9));
+    print_strs("traverse(ga, 2 hops) after",
+              corvid_traverse(nodes, (const uint8_t *)"ga", 2, "parent_of", 9, 2));
+
+    corvid_collection_free(nodes);
+    must("close", corvid_close(db));
+    return 0;
+}
+```
+
+<!-- corvid-examples:graph END -->
+### Geo (radius, bbox, nearest)
+
+<!-- corvid-examples:geo BEGIN -->
+
+```c
+static void put_place(corvid_coll *places, const char *key, double lat,
+                      double lon) {
+    corvid_value *doc = corvid_value_map_new();
+    must("map_put name", corvid_value_map_put(
+        doc, "name", 4, corvid_value_text(key, strlen(key))));
+    /* map_put / array_push CONSUME the child value (spec §5/§8) — the
+     * [lat, lon] point in the engine's array encoding. */
+    corvid_value *loc = corvid_value_array_new();
+    must("array_push lat", corvid_value_array_push(loc, corvid_value_float(lat)));
+    must("array_push lon", corvid_value_array_push(loc, corvid_value_float(lon)));
+    must("map_put loc", corvid_value_map_put(doc, "loc", 3, loc));
+    must("insert",
+         corvid_insert(places, (const uint8_t *)key, strlen(key), doc));
+    corvid_value_free(doc); /* insert CLONES the value; ours is still ours */
+}
+
+static void print_geohits(const char *label, corvid_geohits *h) {
+    printf("%-34s [", label);
+    for (;;) {
+        corvid_geohit hit;
+        const corvid_value *doc = NULL;
+        if (corvid_geohits_next(h, &hit, &doc) != 1) break;
+        printf("%.*s %.6fkm ", (int)hit.key_len, hit.key, hit.distance_km);
+    }
+    printf("]\n");
+    corvid_geohits_free(h);
+}
+
+int main(void) {
+    corvid_db *db = corvid_open_memory();
+    if (!db) { fprintf(stderr, "geo: open failed\n"); return 1; }
+    corvid_coll *places = corvid_collection(db, "places", 6);
+    if (!places) { fprintf(stderr, "geo: collection failed\n"); return 1; }
+
+    put_place(places, "berlin", 52.52, 13.40);
+    put_place(places, "potsdam", 52.40, 13.06);
+    put_place(places, "hamburg", 53.55, 9.99);
+    put_place(places, "munchen", 48.14, 11.58);
+
+    must("create_geo_index", corvid_create_geo_index(places, "loc", 3));
+
+    corvid_geohits *hits = corvid_geo_within_radius(places, "loc", 3,
+                                                    52.52, 13.40, 600.0);
+    if (!hits) { fprintf(stderr, "geo: radius failed\n"); return 1; }
+    print_geohits("within 600km of Berlin:", hits);
+
+    hits = corvid_geo_within_bbox(places, "loc", 3, 47, 5, 55, 15);
+    if (!hits) { fprintf(stderr, "geo: bbox failed\n"); return 1; }
+    print_geohits("bbox 47..55N, 5..15E:", hits);
+
+    hits = corvid_geo_nearest(places, "loc", 3, 52.52, 13.40, 2);
+    if (!hits) { fprintf(stderr, "geo: nearest failed\n"); return 1; }
+    print_geohits("nearest 2 to Berlin:", hits);
+
+    corvid_collection_free(places);
+    must("close", corvid_close(db));
+    return 0;
+}
+```
+
+<!-- corvid-examples:geo END -->
+
+
+
+
 
 The fused scores are RRF rank sums: `s1` is rank 1 of both sources
 (1/61 + 1/61 = 2/61 ≈ 0.032787), `s3` rank 2 of both (2/62 ≈ 0.032258).
@@ -5514,6 +5881,98 @@ The fused scores are RRF rank sums: `s1` is rank 1 of both sources
 Every construct maps to the [ABI function pages](/ffi/functions-lifecycle/);
 the ownership flow (cloned document inputs, consumed query and predicate,
 borrowed row views) follows the [transfer rules](/ffi/ownership/).
+
+## API at a glance
+
+Generated from the binding's `docs/SURFACE.tsv` (every engine
+construct at the pinned tag mapped or N/A with a reason) — regenerated
+by the docs sync, so it cannot drift.
+
+<!-- corvid-api-glance BEGIN -->
+
+| API group | engine constructs | proven by |
+|---|---|---|
+| `corvid_value_* constructors + corvid_value_type` | 10 | golden:values.txt:VTYPE |
+| `corvid_value_array_get / corvid_value_map_get` | 2 | golden:values.txt:VNEST |
+| `corvid_value_as_bool/int/float, corvid_value_text/bytes/vector_ref` | 6 | golden:values.txt:VAS_*/V*_REF |
+| `CORVID_CMP_EQ..GE` | 7 | golden:queries.txt:QF_* |
+| `corvid_pred_* constructor family` | 27 | golden:queries.txt:QF_* + golden:mutations.txt:DELETE_IN |
+| `corvid_metric_t / CORVID_METRIC_*` | 4 | golden:queries.txt:QVEC |
+| `corvid_quant_t / CORVID_QUANT_*` | 4 | golden:schema.txt:IDX_VEC_Q |
+| `CORVID_ERR + corvid_last_error_code/message` | 1 | golden:mutations.txt:INSERT_ERR |
+| `corvid_err enum (corvid_last_error_code)` | 1 | errcodes |
+| `CORVID_E_* (corvid_err enum, code 1)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `CORVID_E_* (corvid_err enum, code 2)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `CORVID_E_* (corvid_err enum, code 3)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `CORVID_E_* (corvid_err enum, code 4)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `CORVID_E_* (corvid_err enum, code 5)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `CORVID_E_* (corvid_err enum, code 6)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `CORVID_E_* (corvid_err enum, code 7)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `CORVID_E_* (corvid_err enum, code 8)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `CORVID_E_* (corvid_err enum, code 9)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `CORVID_E_* (corvid_err enum, code 10)` | 1 | errcodes (frozen-table _Static_assert test); golden:mutations.txt:INSERT_ERR(err:10) |
+| `CORVID_E_* (corvid_err enum, code 11)` | 1 | errcodes (frozen-table _Static_assert test); golden:mutations.txt:INSERT_ERR(err:11) |
+| `CORVID_E_* (corvid_err enum, code 12)` | 1 | errcodes (frozen-table _Static_assert test); golden:mutations.txt:UPDATE_ABORT(err:12) |
+| `CORVID_E_* (corvid_err enum, code 13)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `CORVID_E_* (corvid_err enum, code 14)` | 1 | errcodes (frozen-table _Static_assert test); golden:schema.txt:IDX_PQ_ERR(err:14) |
+| `CORVID_E_* (corvid_err enum, code 15)` | 1 | errcodes (frozen-table _Static_assert test); golden:schema.txt:SCHEMA_ERR(err:15) |
+| `CORVID_E_* (corvid_err enum, code 16)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `CORVID_E_* (corvid_err enum, code 17)` | 1 | errcodes (frozen-table _Static_assert test); golden:admin.txt:BACKUP_DUP(err:17) |
+| `CORVID_E_* (corvid_err enum, code 18)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `corvid_rows_next cursor` | 1 | golden:queries.txt |
+| `corvid_query_new` | 2 | golden:queries.txt |
+| `corvid_query_filter` | 1 | golden:queries.txt:QF_COUNT |
+| `corvid_query_vector` | 1 | golden:queries.txt:QVEC |
+| `corvid_query_text` | 1 | golden:queries.txt:QTEXT |
+| `corvid_query_fuse_rrf` | 1 | golden:queries.txt:HYBRID_F |
+| `corvid_query_rerank_mmr` | 1 | golden:queries.txt:HYBRID |
+| `corvid_query_limit` | 1 | golden:queries.txt:ORDER_BY |
+| `corvid_query_offset` | 1 | golden:queries.txt:ORDER_BY |
+| `corvid_query_order_by` | 1 | golden:queries.txt:ORDER_BY |
+| `corvid_query_approx` | 1 | golden:queries.txt:APPROX |
+| `corvid_query_select` | 1 | golden:queries.txt:SELECT |
+| `corvid_query_count` | 1 | golden:queries.txt:AGG_COUNT |
+| `corvid_query_group_count` | 1 | golden:queries.txt:AGG_GCOUNT |
+| `corvid_query_sum` | 1 | golden:queries.txt:AGG_SUM |
+| `corvid_query_avg` | 1 | golden:queries.txt:AGG_AVG |
+| `corvid_query_min` | 1 | golden:queries.txt:AGG_MIN |
+| `corvid_query_max` | 1 | golden:queries.txt:AGG_MAX |
+| `corvid_query_count_distinct` | 1 | golden:queries.txt:AGG_DISTINCT |
+| `corvid_query_group_sum` | 1 | golden:queries.txt:AGG_GSUM |
+| `corvid_query_group_avg` | 1 | golden:queries.txt:AGG_GAVG |
+| `corvid_query_run` | 1 | golden:queries.txt:QVEC |
+| `corvid_open/corvid_open_memory handle` | 1 | golden:admin.txt:FILEDB |
+| `corvid_open/corvid_open_memory/corvid_collection/corvid_collections/corvid_backup/corvid_compact` | 6 | golden:admin.txt (COLLECTIONS/BACKUP/COMPACT) |
+| `corvid_collection handle family` | 1 | golden:mutations.txt:COLL |
+| `corvid_insert/corvid_update/corvid_patch/corvid_compare_and_set` | 4 | golden:mutations.txt (INSERT/UPDATE/PATCH/CAS) |
+| `corvid_scan callback + stop` | 1 | golden:mutations.txt:SCAN/SCAN_STOP |
+| `corvid_len (== 0 for empty)` | 2 | golden:mutations.txt:LEN |
+| `corvid_put_many` | 1 | golden:mutations.txt:PUTMANY + golden:schema.txt:PUTMANY_ROLLBACK |
+| `corvid_insert_auto` | 1 | golden:mutations.txt:INSERT_AUTO |
+| `corvid_get` | 1 | golden:mutations.txt:GET |
+| `corvid_delete/corvid_delete_where/corvid_delete_batch` | 3 | golden:mutations.txt (DELETE/DELETE_WHERE/DELETE_BATCH) |
+| `corvid_scan (full walk)` | 1 | golden:mutations.txt:SCAN |
+| `corvid_page` | 2 | golden:mutations.txt:PAGE |
+| `row score from corvid_rows_next` | 2 | golden:queries.txt:QVEC; golden:queries.txt:QTEXT |
+| `corvid_phrase_search (the v0.3.0 direct positional fn) over the rows cursor` | 1 | golden:queries.txt:PHRASE |
+| `corvid_query_fuse_rrf default k=60` | 1 | golden:queries.txt:HYBRID |
+| `corvid_geohits_next cursor` | 1 | golden:geo.txt:RADIUS/NEAREST/BBOX |
+| `corvid_geo_within_radius/corvid_geo_nearest/corvid_geo_within_bbox/corvid_create_geo_index` | 4 | golden:geo.txt (RADIUS/NEAREST/BBOX/IDX_GEO) |
+| `corvid_link/corvid_link_weighted/corvid_unlink/corvid_neighbors/corvid_in_neighbors/corvid_neighbors_weighted/corvid_traverse` | 7 | golden:graph.txt |
+| `corvid_create_{scalar,compound,text,text_ondisk,geo,vector,vector_quantized,vector_ondisk,vector_ondisk_quantized,vector_pq,vector_ondisk_pq}_index` | 10 | golden:schema.txt:IDX_* |
+| `corvid_field_type_t / CORVID_FTYPE_*` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA |
+| `corvid_set_schema/corvid_schema + schemaiter` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA/SCHEMA_ERR |
+| `corvid_insert_with_ttl/corvid_set_ttl/corvid_get_ttl/corvid_purge_expired` | 4 | golden:mutations.txt (INSERT_TTL/SET_TTL/GET_TTL/PURGE) |
+| `corvid_dump_to_path/corvid_load_from_path/corvid_load_from_path_with_renames` | 3 | golden:admin.txt (DUMP/LOAD/LOAD_RENAMES) |
+
+151 engine constructs are deliberately not exposed (each with its reason in the repo's `docs/SURFACE.tsv`).
+
+<!-- corvid-api-glance END -->
+
+## API reference
+
+The API *is* the ABI: [corvid.h](https://github.com/corvid-db/corvid/blob/master/crates/corvid-ffi/corvid.h) in the engine repo, documented symbol-by-symbol in the [C ABI reference](/ffi/overview/) here.
+
 
 ## Installing (system use)
 
@@ -5706,9 +6165,376 @@ int run() {
 ```
 
 <!-- corvid-examples:hybrid END -->
+### Vector indexes (ANN vs exact)
+
+<!-- corvid-examples:vector_index BEGIN -->
+
+```cpp
+void put_doc(Collection& docs, std::string_view key, float a, float b,
+             std::string_view tag) {
+    const float v[]{a, b};
+    docs.insert(key,
+                Value::map({{"v", lit::vec(v)}, {"tag", lit::text(tag)}}));
+}
+
+std::string run_vector(Rows rows) {
+    std::string out;
+    for (const Row& r : rows) {
+        if (!out.empty()) out += ",";
+        out += std::string(r.key);
+    }
+    return out;
+}
+
+int run() {
+    const float probe[]{0.99f, 0.05f};
+    Db db = Db::open_memory();
+    Collection docs = db.collection("docs");
+
+    put_doc(docs, "a", 1.0f, 0.0f, "alpha");
+    put_doc(docs, "b", 0.95f, 0.05f, "beta");
+    put_doc(docs, "c", 0.0f, 1.0f, "gamma");
+    put_doc(docs, "d", -1.0f, 0.0f, "delta");
+
+    // 1. The exact scan: no index, the query walks every vector.
+    std::printf("exact    : %s\n",
+                run_vector(docs.query().vector("v", probe, 3).run()).c_str());
+
+    // 2. The in-memory HNSW index: same answer, index-backed.
+    docs.create_vector_index("v", Metric::Cosine);
+    std::printf("hnsw     : %s\n",
+                run_vector(docs.query().vector("v", probe, 3).run()).c_str());
+
+    // 3. Binary-quantized: same family, compressed codes.
+    docs.create_vector_index_quantized("v", Metric::Cosine, Quant::Binary);
+    std::printf("binary   : %s\n",
+                run_vector(docs.query().vector("v", probe, 3).run()).c_str());
+
+    // 4. approx(): the index-first posture — the engine may answer
+    //    from the ANN structure directly.
+    std::printf("approx   : %s\n", run_vector(docs.query()
+                                                  .vector("v", probe, 3)
+                                                  .approx()
+                                                  .run())
+                                       .c_str());
+
+    // 5. The on-disk family + persistence: file db, index, close,
+    //    reopen — the index rides along in the file.
+    const char* path = "vector-index-tmp.redb";
+    {
+        Db file = Db::open(path);
+        Collection fdocs = file.collection("docs");
+        put_doc(fdocs, "a", 1.0f, 0.0f, "alpha");
+        put_doc(fdocs, "c", 0.0f, 1.0f, "gamma");
+        fdocs.create_vector_index_ondisk("v", Metric::Cosine);
+    }  // fdocs freed, file closed — index persisted
+    {
+        Db file = Db::open(path);
+        Collection fdocs = file.collection("docs");
+        std::printf("ondisk   : %s\n", run_vector(fdocs.query()
+                                                     .vector("v", probe, 2)
+                                                     .run())
+                                            .c_str());
+    }
+    std::remove(path);
+    return 0;
+}
+```
+
+<!-- corvid-examples:vector_index END -->
+### Text search (BM25, CJK, phrases)
+
+<!-- corvid-examples:text_search BEGIN -->
+
+```cpp
+int run() {
+    Db db = Db::open_memory();
+    Collection docs = db.collection("docs");
+
+    docs.insert("s1", Value::map({{"body", "the rust embedded database story"}}));
+    docs.insert("s2", Value::map({{"body", "python web frameworks"}}));
+    docs.insert("s3", Value::map({{"body", "rust and database, again rust"}}));
+    docs.insert("c1", Value::map({{"body", "嵌入式数据库"}}));
+    docs.insert("c2", Value::map({{"body", "网络应用框架"}}));
+
+    docs.create_text_index("body");
+
+    // 1. BM25 via the builder: multi-term OR ranking.
+    std::printf("bm25 'rust database':\n");
+    for (const Row& r :
+         docs.query().text("body", "rust database", 3).run()) {
+        auto body = r.doc.get("body").as_text();
+        std::printf("  %.*s score=%.6f %.*s\n", static_cast<int>(r.key.size()),
+                    r.key.data(), static_cast<double>(r.score),
+                    static_cast<int>(body ? body->size() : 1),
+                    body ? body->data() : "?");
+    }
+
+    // 2. CJK: the analyzer tokenizes Han runs; the same builder ranks.
+    std::printf("bm25 '数据库':\n");
+    for (const Row& r : docs.query().text("body", "数据库", 2).run()) {
+        auto body = r.doc.get("body").as_text();
+        std::printf("  %.*s score=%.6f %.*s\n", static_cast<int>(r.key.size()),
+                    r.key.data(), static_cast<double>(r.score),
+                    static_cast<int>(body ? body->size() : 1),
+                    body ? body->data() : "?");
+    }
+
+    // 3. The v0.3.0 phrase API: direct positional search — the phrase
+    //    must appear as a CONSECUTIVE, IN-ORDER token run. "embedded
+    //    database" matches s1; the same words reversed do not; k == 0
+    //    is the inert empty cursor.
+    std::printf("phrase 'embedded database':\n");
+    for (const Row& r : docs.phrase_search("body", "embedded database", 10)) {
+        std::printf("  %.*s score=%.6f\n", static_cast<int>(r.key.size()),
+                    r.key.data(), static_cast<double>(r.score));
+    }
+    Rows reversed = docs.phrase_search("body", "database embedded", 10);
+    std::printf("phrase 'database embedded': %s\n",
+                reversed.next() ? "unexpected hit" : "(no hits — order matters)");
+    Rows inert = docs.phrase_search("body", "embedded database", 0);
+    std::printf("phrase k=0: %s\n",
+                inert.next() ? "unexpected hit" : "(empty cursor, inert)");
+
+    // 4. A CJK phrase, too: consecutive Han tokens.
+    std::printf("phrase '嵌入式数据库':\n");
+    for (const Row& r : docs.phrase_search("body", "嵌入式数据库", 10)) {
+        std::printf("  %.*s score=%.6f\n", static_cast<int>(r.key.size()),
+                    r.key.data(), static_cast<double>(r.score));
+    }
+    return 0;
+}
+```
+
+<!-- corvid-examples:text_search END -->
+### Graph (neighbors, traverse, delete cascade)
+
+<!-- corvid-examples:graph BEGIN -->
+
+```cpp
+int run() {
+    Db db = Db::open_memory();
+    Collection docs = db.collection("docs");
+
+    for (const char* key : {"a", "b", "c", "d"})
+        docs.insert(key, Value::map({{"name", lit::text(key)}}));
+
+    // Directed, labeled edges.
+    docs.link("a", "knows", "b");
+    docs.link("b", "knows", "c");
+    docs.link("c", "knows", "d");
+    docs.link("a", "knows", "c");   // a shortcut edge
+    docs.link("d", "knows", "a");   // a cycle
+
+    std::printf("a knows     :");
+    for (const auto& n : docs.neighbors("a", "knows").to_vector())
+        std::printf(" %s", n.c_str());
+    std::printf("\nc in-edges  :");
+    for (const auto& n : docs.in_neighbors("c", "knows").to_vector())
+        std::printf(" %s", n.c_str());
+    std::printf("\n");
+
+    // Transitive traversal to depth 2 (a -> {b, c} -> {c, d}).
+    std::printf("traverse(a,2):");
+    for (const auto& n : docs.traverse("a", "knows", 2).to_vector())
+        std::printf(" %s", n.c_str());
+    std::printf("\n");
+
+    // Weighted edges + the weighted-neighbor cursor (distance_km
+    // carries the edge weight; no documents ride along).
+    docs.link_weighted("a", "rated", "b", 0.9);
+    docs.link_weighted("a", "rated", "c", 0.5);
+    std::printf("a rated     :");
+    for (const GeoHit& h : docs.neighbors_weighted("a", "rated"))
+        std::printf(" %.*s=%.1f", static_cast<int>(h.key.size()), h.key.data(),
+                    h.distance_km);
+    std::printf("\n");
+
+    // The delete cascade: removing c drops its edges on both sides.
+    expect(docs.erase("c"), "erase(c) existed");
+    std::printf("after erasing c, a knows:");
+    for (const auto& n : docs.neighbors("a", "knows").to_vector())
+        std::printf(" %s", n.c_str());
+    std::printf("\n");
+
+    // unlink removes one specific edge.
+    expect(docs.unlink("a", "knows", "b"), "unlink(a->b) removed");
+    std::printf("after unlink(a->b), a knows:");
+    for (const auto& n : docs.neighbors("a", "knows").to_vector())
+        std::printf(" %s", n.c_str());
+    std::printf("\n");
+    return 0;
+}
+```
+
+<!-- corvid-examples:graph END -->
+### Geo (radius, bbox, nearest)
+
+<!-- corvid-examples:geo BEGIN -->
+
+```cpp
+void put_place(Collection& docs, std::string_view key, std::string_view name,
+               double lat, double lon) {
+    docs.insert(key, Value::map({{"name", lit::text(name)},
+                                 {"loc", Value::array({lat, lon})}}));
+}
+
+int run() {
+    Db db = Db::open_memory();
+    Collection docs = db.collection("places");
+
+    // San Francisco Bay Area pins, plus one far away.
+    put_place(docs, "sfo", "San Francisco", 37.7749, -122.4194);
+    put_place(docs, "oak", "Oakland", 37.8044, -122.2712);
+    put_place(docs, "sjc", "San Jose", 37.3382, -121.8863);
+    put_place(docs, "nyc", "New York", 40.7128, -74.0060);
+
+    docs.create_geo_index("loc");
+
+    // 1. Radius: everything within 30 km of San Francisco.
+    std::printf("within 30km of SF:\n");
+    for (const GeoHit& h :
+         docs.geo_within_radius("loc", 37.7749, -122.4194, 30.0)) {
+        auto name = h.doc.get("name").as_text();
+        std::printf("  %.*s %.*s %.2fkm\n", static_cast<int>(h.key.size()),
+                    h.key.data(), static_cast<int>(name ? name->size() : 1),
+                    name ? name->data() : "?", h.distance_km);
+    }
+
+    // 2. Nearest: the two closest pins to the Golden Gate.
+    std::printf("2 nearest to the Golden Gate:\n");
+    for (const GeoHit& h : docs.geo_nearest("loc", 37.8199, -122.4783, 2)) {
+        auto name = h.doc.get("name").as_text();
+        std::printf("  %.*s %.*s %.2fkm\n", static_cast<int>(h.key.size()),
+                    h.key.data(), static_cast<int>(name ? name->size() : 1),
+                    name ? name->data() : "?", h.distance_km);
+    }
+
+    // 3. Bbox: the South Bay window catches San Jose only.
+    std::printf("bbox (South Bay):\n");
+    for (const GeoHit& h :
+         docs.geo_within_bbox("loc", 37.0, -122.2, 37.5, -121.5)) {
+        auto name = h.doc.get("name").as_text();
+        std::printf("  %.*s %.*s\n", static_cast<int>(h.key.size()),
+                    h.key.data(), static_cast<int>(name ? name->size() : 1),
+                    name ? name->data() : "?");
+    }
+
+    // 4. The geo PREDICATE: geo filtering composed into any query —
+    //    here combined with a scalar filter through pred::all().
+    std::size_t near_count = docs.query()
+                                 .filter(pred::geo_within("loc", 37.7749,
+                                                          -122.4194, 50.0))
+                                 .count();
+    std::printf("pred geo_within(50km) count: %zu\n", near_count);
+    return 0;
+}
+```
+
+<!-- corvid-examples:geo END -->
+
+
+
+
 
 The fused scores are RRF rank sums: `s1` is rank 1 of both sources
 (1/61 + 1/61 = 2/61 ≈ 0.032787), `s3` rank 2 of both (2/62 ≈ 0.032258).
+
+## API at a glance
+
+Generated from the binding's `docs/SURFACE.tsv` (every engine
+construct at the pinned tag mapped or N/A with a reason) — regenerated
+by the docs sync, so it cannot drift.
+
+<!-- corvid-api-glance BEGIN -->
+
+| API group | engine constructs | proven by |
+|---|---|---|
+| `corvid::Value ctors + Value::map/array + Value::type()` | 10 | golden:values.txt:VTYPE; raii:test_values |
+| `corvid::Value::get()/at() (+ corvid::ValueView)` | 1 | golden:values.txt:VNEST; raii:test_values |
+| `corvid::Value::get()/at() chains (+ corvid::ValueView)` | 1 | golden:values.txt:VNEST; raii:test_values |
+| `corvid::Value/ValueView as_bool/as_int/as_float/as_text/as_bytes/as_vector` | 6 | golden:values.txt:VAS_*/V*_REF; raii:test_values |
+| `corvid::Cmp (pred::compare/eq/ne/lt/le/gt/ge)` | 7 | golden:queries.txt:QF_*; raii:test_predicates_and_queries |
+| `corvid::pred::* builder family (returns corvid::Predicate)` | 27 | golden:queries.txt:QF_* + golden:mutations.txt:DELETE_IN; raii:test_predicates_and_queries |
+| `corvid::Metric (Query::vector, Collection::create_vector_index*)` | 4 | golden:queries.txt:QVEC; raii:test_graph_geo_indexes |
+| `corvid::Quant (Collection::create_vector_index_quantized*)` | 4 | golden:schema.txt:IDX_VEC_Q; raii:test_graph_geo_indexes |
+| `corvid::Error thrown on CORVID_ERR (code + message)` | 1 | golden:mutations.txt:INSERT_ERR; raii:test_exceptions |
+| `corvid::Error / corvid::ErrorCode` | 1 | errcodes (compile-time frozen table); raii:test_exceptions |
+| `corvid::ErrorCode::Database (code 1, thrown as corvid::Error)` | 1 | errcodes (compile-time frozen table) |
+| `corvid::ErrorCode::Transaction (code 2, thrown as corvid::Error)` | 1 | errcodes (compile-time frozen table) |
+| `corvid::ErrorCode::Table (code 3, thrown as corvid::Error)` | 1 | errcodes (compile-time frozen table) |
+| `corvid::ErrorCode::Storage (code 4, thrown as corvid::Error)` | 1 | errcodes (compile-time frozen table) |
+| `corvid::ErrorCode::Commit (code 5, thrown as corvid::Error)` | 1 | errcodes (compile-time frozen table) |
+| `corvid::ErrorCode::SetDurability (code 6, thrown as corvid::Error)` | 1 | errcodes (compile-time frozen table) |
+| `corvid::ErrorCode::Compaction (code 7, thrown as corvid::Error)` | 1 | errcodes (compile-time frozen table) |
+| `corvid::ErrorCode::Decode (code 8, thrown as corvid::Error)` | 1 | errcodes (compile-time frozen table) |
+| `corvid::ErrorCode::CorruptIndex (code 9, thrown as corvid::Error)` | 1 | errcodes (compile-time frozen table) |
+| `corvid::ErrorCode::ReservedCollection (code 10, thrown as corvid::Error)` | 1 | errcodes (compile-time frozen table); golden:mutations.txt:INSERT_ERR(err:10) |
+| `corvid::ErrorCode::InvalidName (code 11, thrown as corvid::Error)` | 1 | errcodes (compile-time frozen table); golden:mutations.txt:INSERT_ERR(err:11) |
+| `corvid::ErrorCode::InvalidArgument (code 12, thrown as corvid::Error)` | 1 | errcodes (compile-time frozen table); golden:mutations.txt:UPDATE_ABORT(err:12) |
+| `corvid::ErrorCode::IncompatibleFormat (code 13, thrown as corvid::Error)` | 1 | errcodes (compile-time frozen table) |
+| `corvid::ErrorCode::EmptyIndexTraining (code 14, thrown as corvid::Error)` | 1 | errcodes (compile-time frozen table); golden:schema.txt:IDX_PQ_ERR(err:14) |
+| `corvid::ErrorCode::SchemaViolation (code 15, thrown as corvid::Error)` | 1 | errcodes (compile-time frozen table); golden:schema.txt:SCHEMA_ERR(err:15) |
+| `corvid::ErrorCode::InvalidDump (code 16, thrown as corvid::Error)` | 1 | errcodes (compile-time frozen table) |
+| `corvid::ErrorCode::BackupTargetExists (code 17, thrown as corvid::Error)` | 1 | errcodes (compile-time frozen table); golden:admin.txt:BACKUP_DUP(err:17) |
+| `corvid::ErrorCode::Io (code 18, thrown as corvid::Error)` | 1 | errcodes (compile-time frozen table) |
+| `corvid::Row (corvid::Rows range)` | 1 | golden:queries.txt; raii:test_predicates_and_queries |
+| `corvid::Query (Collection::query(), fluent chaining)` | 1 | golden:queries.txt; raii:test_predicates_and_queries |
+| `Collection::query() -> corvid::Query` | 1 | golden:queries.txt; raii:test_predicates_and_queries |
+| `Query::filter(Predicate)` | 1 | golden:queries.txt:QF_COUNT; raii:test_predicates_and_queries |
+| `Query::vector(field, probe, k, Metric)` | 1 | golden:queries.txt:QVEC; example:vector_index |
+| `Query::text(field, query, k)` | 1 | golden:queries.txt:QTEXT; example:text_search |
+| `Query::fuse_rrf(k=60)` | 1 | golden:queries.txt:HYBRID_F; example:hybrid |
+| `Query::rerank_mmr(lambda)` | 1 | golden:queries.txt:HYBRID; example:hybrid |
+| `Query::limit(n)` | 1 | golden:queries.txt:ORDER_BY; example:hybrid |
+| `Query::offset(n)` | 1 | golden:queries.txt:ORDER_BY; raii:test_predicates_and_queries |
+| `Query::order_by(field, descending)` | 1 | golden:queries.txt:ORDER_BY; raii:test_predicates_and_queries |
+| `Query::approx()` | 1 | golden:queries.txt:APPROX; example:vector_index |
+| `Query::select(fields)` | 1 | golden:queries.txt:SELECT; raii:test_predicates_and_queries |
+| `Query::count()` | 1 | golden:queries.txt:AGG_COUNT; raii:test_predicates_and_queries |
+| `Query::group_count(field) -> GroupIter` | 1 | golden:queries.txt:AGG_GCOUNT; raii:test_predicates_and_queries |
+| `Query::sum(field)` | 1 | golden:queries.txt:AGG_SUM; raii:test_predicates_and_queries |
+| `Query::avg(field)` | 1 | golden:queries.txt:AGG_AVG; raii:test_predicates_and_queries |
+| `Query::min(field)` | 1 | golden:queries.txt:AGG_MIN; raii:test_predicates_and_queries |
+| `Query::max(field)` | 1 | golden:queries.txt:AGG_MAX; raii:test_predicates_and_queries |
+| `Query::count_distinct(field)` | 1 | golden:queries.txt:AGG_DISTINCT; raii:test_predicates_and_queries |
+| `Query::group_sum(key, value) -> GroupIter` | 1 | golden:queries.txt:AGG_GSUM; raii:test_predicates_and_queries |
+| `Query::group_avg(key, value) -> GroupIter` | 1 | golden:queries.txt:AGG_GAVG |
+| `Query::run() -> Rows` | 1 | golden:queries.txt:QVEC; example:quickstart |
+| `corvid::Db (RAII; Db::open / Db::open_memory)` | 1 | golden:admin.txt:FILEDB; raii:test_persistence |
+| `Db::open/open_memory/collection/collections/backup/compact` | 6 | golden:admin.txt (COLLECTIONS/BACKUP/COMPACT); raii:test_persistence |
+| `corvid::Collection (RAII handle, Db::collection())` | 1 | golden:mutations.txt:COLL; raii:test_mutations_and_reads |
+| `Collection::insert/update/patch/compare_and_set` | 4 | golden:mutations.txt (INSERT/UPDATE/PATCH/CAS); raii:test_mutations_and_reads |
+| `Collection::scan(fn) with early stop` | 1 | golden:mutations.txt:SCAN/SCAN_STOP; raii:test_mutations_and_reads |
+| `Collection::len() (== 0 for empty)` | 1 | golden:mutations.txt:LEN; raii:test_mutations_and_reads |
+| `Collection::len() == 0` | 1 | golden:mutations.txt:LEN; raii:test_mutations_and_reads |
+| `Collection::put_many(items)` | 1 | golden:mutations.txt:PUTMANY + golden:schema.txt:PUTMANY_ROLLBACK; raii:test_mutations_and_reads |
+| `Collection::insert_auto(doc) -> key` | 1 | golden:mutations.txt:INSERT_AUTO; raii:test_mutations_and_reads |
+| `Collection::get(key) -> optional<Value>` | 1 | golden:mutations.txt:GET/GET_KEYS; raii:test_mutations_and_reads |
+| `Collection::erase/erase_where/erase_batch` | 3 | golden:mutations.txt (DELETE/DELETE_WHERE/DELETE_BATCH); raii:test_mutations_and_reads |
+| `Collection::scan(fn)` | 1 | golden:mutations.txt:SCAN; raii:test_mutations_and_reads |
+| `Collection::page(after, limit) -> Page` | 1 | golden:mutations.txt:PAGE; raii:test_mutations_and_reads |
+| `corvid::Page (rows + next cursor)` | 1 | golden:mutations.txt:PAGE; raii:test_mutations_and_reads |
+| `corvid::Row::score` | 2 | golden:queries.txt:QVEC; example:quickstart; golden:queries.txt:QTEXT + PHRASE; example:text_search |
+| `Collection::phrase_search(field, phrase, k) -> Rows` | 1 | golden:queries.txt:PHRASE/PHRASE_K0; raii:test_phrase_search; example:text_search |
+| `Query::fuse_rrf default k = 60.0f` | 1 | golden:queries.txt:HYBRID; example:hybrid |
+| `corvid::GeoHit (key + distance_km + doc)` | 1 | golden:geo.txt:RADIUS/NEAREST/BBOX; example:geo |
+| `Collection::geo_within_radius/geo_nearest/geo_within_bbox/create_geo_index` | 4 | golden:geo.txt (RADIUS/NEAREST/BBOX/IDX_GEO); example:geo |
+| `Collection::link/link_weighted/unlink/neighbors/in_neighbors/neighbors_weighted/traverse` | 7 | golden:graph.txt; example:graph |
+| `Collection::create_scalar/compound/text/text_ondisk/geo/vector/vector_quantized/vector_ondisk/vector_ondisk_quantized/vector_pq/vector_ondisk_pq _index` | 10 | golden:schema.txt:IDX_*; raii:test_graph_geo_indexes; example:vector_index |
+| `corvid::FieldType (FieldDef/Field)` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA/SCHEMA9; raii:test_graph_geo_indexes |
+| `Collection::set_schema(span<FieldDef>) / schema() -> vector<Field>` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA/SCHEMA_ERR; raii:test_graph_geo_indexes |
+| `Collection::insert_with_ttl/set_ttl/ttl/purge_expired` | 4 | golden:mutations.txt (INSERT_TTL/SET_TTL/GET_TTL/PURGE); raii:test_mutations_and_reads |
+| `Db::dump_to/load_from/load_from_with_renames` | 3 | golden:admin.txt (DUMP/LOAD/LOAD_RENAMES) + golden:persist.txt; raii:test_persistence |
+
+151 engine constructs are deliberately not exposed (each with its reason in the repo's `docs/SURFACE.tsv`).
+
+<!-- corvid-api-glance END -->
+
+## API reference
+
+Header-first: the [corvid/ headers](https://github.com/corvid-db/corvid-cpp/tree/master/include/corvid) in the repo are the reference — RAII classes, documented in place.
+
 
 ## What the RAII layer adds over the C ABI
 
@@ -5934,6 +6760,252 @@ void main() {
 ```
 
 <!-- corvid-examples:hybrid END -->
+### Vector indexes (ANN vs exact)
+
+<!-- corvid-examples:vector_index BEGIN -->
+
+```dart
+void main() {
+  final path = '${Directory.systemTemp.path}/corvid-dart-vector-index.redb';
+  final f = File(path);
+  if (f.existsSync()) f.deleteSync(); // reruns start clean (single-file db)
+
+  final db = Db.open(path);
+  final items = db.collection('items');
+  for (final (key, v) in corpus) {
+    items.insert(kb(key), {
+      'v_mem': Float32List.fromList(v),
+      'v_disk': Float32List.fromList(v),
+      'v_q': Float32List.fromList(v),
+    });
+  }
+  items.createVectorIndex('v_mem', Metric.cosine);
+  items.createVectorIndexOnDisk('v_disk', Metric.cosine);
+  items.createVectorIndexQuantized('v_q', Metric.cosine, Quant.binary);
+
+  print('top-4 nearest to (1,0,0,0) under cosine:');
+  runQuery(items, 'v_mem', false, 'exact (scan):');
+  runQuery(items, 'v_mem', true, 'ann in-memory HNSW:');
+  runQuery(items, 'v_disk', true, 'ann on-disk HNSW:');
+  runQuery(items, 'v_q', true, 'ann binary-quantized:');
+  print('(the quantized lane trades recall for a ~32x smaller index)');
+
+  items.close();
+  db.close();
+
+  // Reopen: the on-disk graph reloads (no rebuild) and answers again.
+  final db2 = Db.open(path);
+  final items2 = db2.collection('items');
+  runQuery(items2, 'v_disk', true, 'ann on-disk after reopen:');
+  items2.close();
+  db2.close();
+
+  f.deleteSync();
+}
+```
+
+<!-- corvid-examples:vector_index END -->
+### Text search (BM25, CJK, phrases)
+
+<!-- corvid-examples:text_search BEGIN -->
+
+```dart
+void main() {
+  final db = Db.openMemory();
+  final notes = db.collection('notes');
+
+  for (final (key, body) in corpus) {
+    notes.insert(kb(key), {'body': body});
+  }
+  notes.createTextIndex('body');
+
+  search(notes, 'quick fox', 'bm25 "quick fox":');
+  search(notes, 'quick dog', 'bm25 "quick dog":');
+  search(notes, '城市', 'bm25 CJK 城市 (city):');
+  search(notes, '数据库', 'bm25 CJK 数据库 (database):');
+
+  phrase(notes, 'fox jumps over', 'phrase "fox jumps over":');
+  phrase(notes, 'over jumps fox', 'phrase "over jumps fox" (reversed — no match):');
+  phrase(notes, 'leaps over a sleeping', 'phrase with stop words collapsed:');
+
+  notes.close();
+  db.close();
+}
+```
+
+<!-- corvid-examples:text_search END -->
+### Graph (neighbors, traverse, delete cascade)
+
+<!-- corvid-examples:graph BEGIN -->
+
+```dart
+void main() {
+  final db = Db.openMemory();
+  final nodes = db.collection('nodes');
+
+  for (final key in ['ga', 'gb', 'gc']) {
+    nodes.insert(kb(key), {'n': key});
+  }
+
+  nodes.link(kb('ga'), 'parent_of', kb('gb'));
+  nodes.link(kb('ga'), 'parent_of', kb('gc'));
+  nodes.link(kb('gb'), 'parent_of', kb('gd')); // gd never exists as a document
+  nodes.linkWeighted(kb('ga'), 'route', kb('gb'), 2.5);
+  nodes.linkWeighted(kb('ga'), 'route', kb('gd'), 0.75);
+
+  final ga = kb('ga'), gb = kb('gb');
+
+  show('neighbors(ga)', nodes.neighbors(ga, 'parent_of'));
+  show('in_neighbors(gb)', nodes.inNeighbors(gb, 'parent_of'));
+
+  final routes = nodes.neighborsWeighted(ga, 'route');
+  final parts = [
+    for (final r in routes)
+      '${String.fromCharCodes(r.key)}=${r.weight.toStringAsFixed(2)}',
+  ];
+  print('${'routes from ga (weighted):'.padRight(36)} [${parts.join(' ')}]');
+
+  show('traverse(ga, 1 hop)', nodes.traverse(ga, 'parent_of', 1));
+  show('traverse(ga, 2 hops)', nodes.traverse(ga, 'parent_of', 2));
+
+  // Delete cascade: remove gc (a document) and gd (never a document).
+  print('delete gc: existed = ${nodes.delete(kb('gc'))}');
+  print('delete gd: existed = ${nodes.delete(kb('gd'))} '
+      '(never a document; its edges still cascade)');
+
+  show('neighbors(ga) after deletes', nodes.neighbors(ga, 'parent_of'));
+  show('neighbors(gb) after deletes', nodes.neighbors(gb, 'parent_of'));
+  show('traverse(ga, 2 hops) after', nodes.traverse(ga, 'parent_of', 2));
+
+  nodes.close();
+  db.close();
+}
+```
+
+<!-- corvid-examples:graph END -->
+### Geo (radius, bbox, nearest)
+
+<!-- corvid-examples:geo BEGIN -->
+
+```dart
+void main() {
+  final db = Db.openMemory();
+  final places = db.collection('places');
+
+  for (final (name, lat, lon) in cities) {
+    places.insert(kb(name), {
+      'name': name,
+      'loc': [lat, lon], // the [lat, lon] array encoding
+    });
+  }
+  places.createGeoIndex('loc');
+
+  show('within 600km of Berlin:', places.geoWithinRadius('loc', 52.52, 13.40, 600.0));
+  show('bbox 47..55N, 5..15E:', places.geoWithinBBox('loc', 47, 5, 55, 15));
+  show('nearest 2 to Berlin:', places.geoNearest('loc', 52.52, 13.40, 2));
+
+  places.close();
+  db.close();
+}
+```
+
+<!-- corvid-examples:geo END -->
+
+
+
+
+
+## API at a glance
+
+Generated from the binding's `docs/SURFACE.tsv` (every engine
+construct at the pinned tag mapped or N/A with a reason) — regenerated
+by the docs sync, so it cannot drift.
+
+<!-- corvid-api-glance BEGIN -->
+
+| API group | engine constructs | proven by |
+|---|---|---|
+| `the Dart value mapping (null/bool/int/double/String/Uint8List/Float32List/List<Object?>/Map<String,Object?>)` | 10 | golden:values.txt:VTYPE |
+| `maxNesting — the encode-side depth cap (the engine's decode bound, 128): converter-accepted == decodable, deeper graphs throw CorvidException(argument)` | 1 | depthcap_test.dart |
+| `FieldExpr eq/ne/lt/le/gt/ge` | 7 | golden:queries.txt:QF_* |
+| `Predicate via field()/not()` | 27 | golden:queries.txt:QF_* + golden:mutations.txt:DELETE_IN |
+| `Metric enum (cosine/dot/l2)` | 4 | golden:queries.txt:QVEC |
+| `Quant enum (none/binary/scalar)` | 4 | golden:schema.txt:IDX_VEC_Q |
+| `throws CorvidException (code + message)` | 1 | golden:mutations.txt:INSERT_ERR |
+| `CorvidException.code (CorvidErrorCode — the frozen table)` | 1 | errcodes_test.dart |
+| `ErrDatabase (code 1)` | 1 | TestErrorCodeTable |
+| `ErrTransaction (code 2)` | 1 | TestErrorCodeTable |
+| `ErrTable (code 3)` | 1 | TestErrorCodeTable |
+| `ErrStorage (code 4)` | 1 | TestErrorCodeTable |
+| `ErrCommit (code 5)` | 1 | TestErrorCodeTable |
+| `ErrSetDurability (code 6)` | 1 | TestErrorCodeTable |
+| `ErrCompaction (code 7)` | 1 | TestErrorCodeTable |
+| `ErrDecode (code 8)` | 1 | TestErrorCodeTable |
+| `ErrCorruptIndex (code 9)` | 1 | TestErrorCodeTable |
+| `ErrReservedCollection (code 10)` | 1 | TestErrorCodeTable; golden:mutations.txt:INSERT_ERR(err:10) |
+| `ErrInvalidName (code 11)` | 1 | TestErrorCodeTable; golden:mutations.txt:INSERT_ERR(err:11) |
+| `ErrArgument (code 12)` | 1 | TestErrorCodeTable; golden:mutations.txt:UPDATE_ABORT(err:12) |
+| `ErrIncompatibleFormat (code 13)` | 1 | TestErrorCodeTable |
+| `ErrEmptyIndexTraining (code 14)` | 1 | TestErrorCodeTable; golden:schema.txt:IDX_PQ_ERR(err:14) |
+| `ErrSchemaViolation (code 15)` | 1 | TestErrorCodeTable; golden:schema.txt:SCHEMA_ERR(err:15) |
+| `ErrInvalidDump (code 16)` | 1 | TestErrorCodeTable |
+| `ErrBackupTargetExists (code 17)` | 1 | TestErrorCodeTable; golden:admin.txt:BACKUP_DUP(err:17) |
+| `ErrIO (code 18)` | 1 | TestErrorCodeTable |
+| `Row { key, doc, score }` | 1 | golden:queries.txt |
+| `Query (Collection.query())` | 2 | golden:queries.txt |
+| `Query.filter` | 1 | golden:queries.txt:QF_COUNT |
+| `Query.vector` | 1 | golden:queries.txt:QVEC |
+| `Query.text` | 1 | golden:queries.txt:QTEXT |
+| `Query.fuseRRF` | 1 | golden:queries.txt:HYBRID_F |
+| `Query.rerankMMR` | 1 | golden:queries.txt:HYBRID |
+| `Query.limit` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.offset` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.orderBy` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.approx` | 1 | golden:queries.txt:APPROX |
+| `Query.select` | 1 | golden:queries.txt:SELECT |
+| `Query.count` | 1 | golden:queries.txt:AGG_COUNT |
+| `Query.groupCount` | 1 | golden:queries.txt:AGG_GCOUNT |
+| `Query.sum` | 1 | golden:queries.txt:AGG_SUM |
+| `Query.avg` | 1 | golden:queries.txt:AGG_AVG |
+| `Query.min` | 1 | golden:queries.txt:AGG_MIN |
+| `Query.max` | 1 | golden:queries.txt:AGG_MAX |
+| `Query.countDistinct` | 1 | golden:queries.txt:AGG_DISTINCT |
+| `Query.groupSum` | 1 | golden:queries.txt:AGG_GSUM |
+| `Query.groupAvg` | 1 | golden:queries.txt:AGG_GAVG |
+| `Query.run` | 1 | golden:queries.txt:QVEC |
+| `Db` | 1 | golden:admin.txt:FILEDB |
+| `Db.open/openMemory/collection/collections/backup/compact` | 6 | golden:admin.txt (COLLECTIONS/BACKUP/COMPACT) |
+| `Collection` | 1 | golden:mutations.txt:COLL |
+| `Collection insert/update/patch/compareAndSet` | 4 | golden:mutations.txt (INSERT/UPDATE/PATCH/CAS) |
+| `Collection.scan(callback) — return false for the early stop` | 1 | golden:mutations.txt:SCAN/SCAN_STOP |
+| `Collection.length (length()==0 for empty)` | 2 | golden:mutations.txt:LEN |
+| `Collection.putMany` | 1 | golden:mutations.txt:PUTMANY + golden:schema.txt:PUTMANY_ROLLBACK |
+| `Collection.insertAuto` | 1 | golden:mutations.txt:INSERT_AUTO |
+| `Collection.get` | 1 | golden:mutations.txt:GET |
+| `Collection delete/deleteWhere/deleteBatch` | 3 | golden:mutations.txt (DELETE/DELETE_WHERE/DELETE_BATCH) |
+| `Collection.scan` | 1 | golden:mutations.txt:SCAN |
+| `Collection.page -> Page { rows, next }` | 2 | golden:mutations.txt:PAGE |
+| `Row.score (Query.vector().run())` | 1 | golden:queries.txt:QVEC |
+| `Row.score (Query.text().run())` | 1 | golden:queries.txt:QTEXT |
+| `Collection.phraseSearch(field, phrase, k) — the direct positional search (corvid_phrase_search, v0.3.0) over the rows cursor` | 1 | golden:queries.txt:PHRASE |
+| `Query.fuseRRF (RRF constant, e.g. 60)` | 1 | golden:queries.txt:HYBRID |
+| `GeoHit { Key, Doc, DistanceKm }` | 1 | golden:geo.txt:RADIUS/NEAREST/BBOX |
+| `Collection geoWithinRadius/geoNearest/geoWithinBBox/createGeoIndex` | 4 | golden:geo.txt (RADIUS/NEAREST/BBOX/IDX_GEO) |
+| `Collection link/linkWeighted/unlink/neighbors/inNeighbors/neighborsWeighted/traverse` | 7 | golden:graph.txt |
+| `Collection.createScalarIndex/createCompoundIndex/createTextIndex[/OnDisk]/createGeoIndex/createVectorIndex* (6 variants)` | 10 | golden:schema.txt:IDX_* |
+| `FieldType enum (any/boolean/integer/float/text/bytes/vector/array/map)` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA |
+| `Collection.setSchema/schema + FieldDef { name, type, required, unique }` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA/SCHEMA_ERR |
+| `Collection insertTTL/setTTL/getTTL/purgeExpired` | 4 | golden:mutations.txt (INSERT_TTL/SET_TTL/GET_TTL/PURGE) |
+| `Db dump/load/loadWithRenames` | 3 | golden:admin.txt (DUMP/LOAD/LOAD_RENAMES) |
+
+158 engine constructs are deliberately not exposed (each with its reason in the repo's `docs/SURFACE.tsv`).
+
+<!-- corvid-api-glance END -->
+
+## API reference
+
+pub.dev renders the API from the doc comments: [pub.dev/documentation/corvid](https://pub.dev/documentation/corvid/latest/).
+
 
 ## The correctness floor
 
@@ -6025,7 +7097,7 @@ Six runnable programs under the repo's `examples/` directory (`go run
 (in-memory / on-disk / binary-quantized HNSW vs the exact scan),
 **text-search** (BM25 incl. CJK bigram segmentation, plus the v0.3.0 direct `PhraseSearch`), **graph**
 (neighbors/traverse + delete cascade), and **geo** (radius / bbox /
-nearest). The quickstart and hybrid sources are embedded below — imported
+nearest). All six sources are embedded below — imported
 from the repo so they cannot drift from what CI executes
 (`scripts/sync-binding-examples.sh`; the drift gate reddens docs CI if
 they diverge).
@@ -6131,9 +7203,323 @@ func main() {
 ```
 
 <!-- corvid-examples:hybrid END -->
+### Vector indexes (ANN vs exact)
+
+<!-- corvid-examples:vector_index BEGIN -->
+
+```go
+func main() {
+	path := filepath.Join(os.TempDir(), "corvid-go-example-vector-index.redb")
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		panic(err)
+	} // reruns start clean (single-file db)
+
+	db, err := corvid.Open(path)
+	if err != nil {
+		panic(err)
+	}
+	items, err := db.Collection("items")
+	if err != nil {
+		panic(err)
+	}
+	for _, c := range corpus {
+		must(items.Insert([]byte(c.key), map[string]any{
+			"v_mem": c.v, "v_disk": c.v, "v_q": c.v,
+		}))
+	}
+	must(items.CreateVectorIndex("v_mem", corvid.MetricCosine))
+	must(items.CreateVectorIndexOnDisk("v_disk", corvid.MetricCosine))
+	must(items.CreateVectorIndexQuantized("v_q", corvid.MetricCosine, corvid.QuantBinary))
+
+	fmt.Println("top-4 nearest to (1,0,0,0) under cosine:")
+	runQuery(items, "v_mem", false, "exact (scan):")
+	runQuery(items, "v_mem", true, "ann in-memory HNSW:")
+	runQuery(items, "v_disk", true, "ann on-disk HNSW:")
+	runQuery(items, "v_q", true, "ann binary-quantized:")
+	fmt.Println("(the quantized lane trades recall for a ~32x smaller index)")
+
+	items.Close()
+	must(db.Close())
+
+	// Reopen: the on-disk graph reloads (no rebuild) and answers again.
+	db, err = corvid.Open(path)
+	if err != nil {
+		panic(err)
+	}
+	items, err = db.Collection("items")
+	if err != nil {
+		panic(err)
+	}
+	runQuery(items, "v_disk", true, "ann on-disk after reopen:")
+	items.Close()
+	must(db.Close())
+
+	must(os.Remove(path))
+}
+```
+
+<!-- corvid-examples:vector_index END -->
+### Text search (BM25, CJK, phrases)
+
+<!-- corvid-examples:text_search BEGIN -->
+
+```go
+func main() {
+	db, err := corvid.OpenMemory()
+	if err != nil {
+		panic(err)
+	}
+	defer func() { must(db.Close()) }()
+
+	notes, err := db.Collection("notes")
+	if err != nil {
+		panic(err)
+	}
+	defer notes.Close()
+
+	for _, n := range corpus {
+		must(notes.Insert([]byte(n.key), map[string]any{"body": n.body}))
+	}
+	must(notes.CreateTextIndex("body"))
+
+	search(notes, "quick fox", `bm25 "quick fox":`)
+	search(notes, "quick dog", `bm25 "quick dog":`)
+	search(notes, "城市", "bm25 CJK 城市 (city):")
+	search(notes, "数据库", "bm25 CJK 数据库 (database):")
+
+	phrase(notes, "fox jumps over", `phrase "fox jumps over":`)
+	phrase(notes, "over jumps fox", `phrase "over jumps fox" (reversed — no match):`)
+	phrase(notes, "leaps over a sleeping", `phrase with stop words collapsed:`)
+}
+```
+
+<!-- corvid-examples:text_search END -->
+### Graph (neighbors, traverse, delete cascade)
+
+<!-- corvid-examples:graph BEGIN -->
+
+```go
+func main() {
+	db, err := corvid.OpenMemory()
+	if err != nil {
+		panic(err)
+	}
+	defer func() { must(db.Close()) }()
+
+	nodes, err := db.Collection("nodes")
+	if err != nil {
+		panic(err)
+	}
+	defer nodes.Close()
+
+	for _, key := range []string{"ga", "gb", "gc"} {
+		must(nodes.Insert([]byte(key), map[string]any{"n": key}))
+	}
+
+	must(nodes.Link([]byte("ga"), "parent_of", []byte("gb")))
+	must(nodes.Link([]byte("ga"), "parent_of", []byte("gc")))
+	must(nodes.Link([]byte("gb"), "parent_of", []byte("gd"))) // gd never exists as a document
+	must(nodes.LinkWeighted([]byte("ga"), "route", []byte("gb"), 2.5))
+	must(nodes.LinkWeighted([]byte("ga"), "route", []byte("gd"), 0.75))
+
+	ga, gb := []byte("ga"), []byte("gb")
+
+	if nb, err := nodes.Neighbors(ga, "parent_of"); err != nil {
+		panic(err)
+	} else {
+		show("neighbors(ga)", nb)
+	}
+	if in, err := nodes.InNeighbors(gb, "parent_of"); err != nil {
+		panic(err)
+	} else {
+		show("in_neighbors(gb)", in)
+	}
+	if routes, err := nodes.NeighborsWeighted(ga, "route"); err != nil {
+		panic(err)
+	} else {
+		parts := make([]string, len(routes))
+		for i, r := range routes {
+			parts[i] = fmt.Sprintf("%s=%.2f", r.Key, r.Weight)
+		}
+		fmt.Printf("%-36s [%s]\n", "routes from ga (weighted):", strings.Join(parts, " "))
+	}
+	if tr, err := nodes.Traverse(ga, "parent_of", 1); err != nil {
+		panic(err)
+	} else {
+		show("traverse(ga, 1 hop)", tr)
+	}
+	if tr, err := nodes.Traverse(ga, "parent_of", 2); err != nil {
+		panic(err)
+	} else {
+		show("traverse(ga, 2 hops)", tr)
+	}
+
+	// Delete cascade: remove gc (a document) and gd (never a document).
+	if existed, err := nodes.Delete([]byte("gc")); err != nil {
+		panic(err)
+	} else {
+		fmt.Println("delete gc: existed =", existed)
+	}
+	if existed, err := nodes.Delete([]byte("gd")); err != nil {
+		panic(err)
+	} else {
+		fmt.Println("delete gd: existed =", existed,
+			"(never a document; its edges still cascade)")
+	}
+
+	if nb, err := nodes.Neighbors(ga, "parent_of"); err != nil {
+		panic(err)
+	} else {
+		show("neighbors(ga) after deletes", nb)
+	}
+	if nb, err := nodes.Neighbors(gb, "parent_of"); err != nil {
+		panic(err)
+	} else {
+		show("neighbors(gb) after deletes", nb)
+	}
+	if tr, err := nodes.Traverse(ga, "parent_of", 2); err != nil {
+		panic(err)
+	} else {
+		show("traverse(ga, 2 hops) after", tr)
+	}
+}
+```
+
+<!-- corvid-examples:graph END -->
+### Geo (radius, bbox, nearest)
+
+<!-- corvid-examples:geo BEGIN -->
+
+```go
+func main() {
+	db, err := corvid.OpenMemory()
+	if err != nil {
+		panic(err)
+	}
+	defer func() { must(db.Close()) }()
+
+	places, err := db.Collection("places")
+	if err != nil {
+		panic(err)
+	}
+	defer places.Close()
+
+	for _, c := range cities {
+		must(places.Insert([]byte(c.name), map[string]any{
+			"name": c.name,
+			"loc":  []any{c.lat, c.lon}, // the [lat, lon] array encoding
+		}))
+	}
+	must(places.CreateGeoIndex("loc"))
+
+	hits, err := places.GeoWithinRadius("loc", 52.52, 13.40, 600.0)
+	show("within 600km of Berlin:", hits, err)
+	hits, err = places.GeoWithinBBox("loc", 47, 5, 55, 15)
+	show("bbox 47..55N, 5..15E:", hits, err)
+	hits, err = places.GeoNearest("loc", 52.52, 13.40, 2)
+	show("nearest 2 to Berlin:", hits, err)
+}
+```
+
+<!-- corvid-examples:geo END -->
+
+
+
+
 
 The fused scores are RRF rank sums: `s1` is rank 1 of both sources
 (1/61 + 1/61 = 2/61 ≈ 0.032787), `s3` rank 2 of both (2/62 ≈ 0.032258).
+
+## API at a glance
+
+Generated from the binding's `docs/SURFACE.tsv` (every engine
+construct at the pinned tag mapped or N/A with a reason) — regenerated
+by the docs sync, so it cannot drift.
+
+<!-- corvid-api-glance BEGIN -->
+
+| API group | engine constructs | proven by |
+|---|---|---|
+| `the Go value mapping (nil/bool/int64/float64/string/[]byte/[]float32/[]any/map[string]any)` | 10 | golden:values.txt:VTYPE |
+| `FieldExpr.Eq/Ne/Lt/Le/Gt/Ge` | 7 | golden:queries.txt:QF_* |
+| `Predicate via Field()/Not()` | 27 | golden:queries.txt:QF_* + golden:mutations.txt:DELETE_IN |
+| `Metric type (MetricCosine/MetricDot/MetricL2)` | 4 | golden:queries.txt:QVEC |
+| `Quant type (QuantNone/QuantBinary/QuantScalar)` | 4 | golden:schema.txt:IDX_VEC_Q |
+| `returns *CorvidError` | 1 | golden:mutations.txt:INSERT_ERR |
+| `CorvidError.Code() (ErrCode table)` | 1 | TestErrorCodeTable |
+| `ErrDatabase (code 1)` | 1 | TestErrorCodeTable |
+| `ErrTransaction (code 2)` | 1 | TestErrorCodeTable |
+| `ErrTable (code 3)` | 1 | TestErrorCodeTable |
+| `ErrStorage (code 4)` | 1 | TestErrorCodeTable |
+| `ErrCommit (code 5)` | 1 | TestErrorCodeTable |
+| `ErrSetDurability (code 6)` | 1 | TestErrorCodeTable |
+| `ErrCompaction (code 7)` | 1 | TestErrorCodeTable |
+| `ErrDecode (code 8)` | 1 | TestErrorCodeTable |
+| `ErrCorruptIndex (code 9)` | 1 | TestErrorCodeTable |
+| `ErrReservedCollection (code 10)` | 1 | TestErrorCodeTable; golden:mutations.txt:INSERT_ERR(err:10) |
+| `ErrInvalidName (code 11)` | 1 | TestErrorCodeTable; golden:mutations.txt:INSERT_ERR(err:11) |
+| `ErrArgument (code 12)` | 1 | TestErrorCodeTable; golden:mutations.txt:UPDATE_ABORT(err:12) |
+| `ErrIncompatibleFormat (code 13)` | 1 | TestErrorCodeTable |
+| `ErrEmptyIndexTraining (code 14)` | 1 | TestErrorCodeTable; golden:schema.txt:IDX_PQ_ERR(err:14) |
+| `ErrSchemaViolation (code 15)` | 1 | TestErrorCodeTable; golden:schema.txt:SCHEMA_ERR(err:15) |
+| `ErrInvalidDump (code 16)` | 1 | TestErrorCodeTable |
+| `ErrBackupTargetExists (code 17)` | 1 | TestErrorCodeTable; golden:admin.txt:BACKUP_DUP(err:17) |
+| `ErrIO (code 18)` | 1 | TestErrorCodeTable |
+| `Row { Key, Doc, Score }` | 1 | golden:queries.txt |
+| `Query (Collection.Query())` | 2 | golden:queries.txt |
+| `Query.Filter` | 1 | golden:queries.txt:QF_COUNT |
+| `Query.Vector` | 1 | golden:queries.txt:QVEC |
+| `Query.Text` | 1 | golden:queries.txt:QTEXT |
+| `Query.FuseRRF` | 1 | golden:queries.txt:HYBRID_F |
+| `Query.RerankMMR` | 1 | golden:queries.txt:HYBRID |
+| `Query.Limit` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.Offset` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.OrderBy` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.Approx` | 1 | golden:queries.txt:APPROX |
+| `Query.Select` | 1 | golden:queries.txt:SELECT |
+| `Query.Count` | 1 | golden:queries.txt:AGG_COUNT |
+| `Query.GroupCount` | 1 | golden:queries.txt:AGG_GCOUNT |
+| `Query.Sum` | 1 | golden:queries.txt:AGG_SUM |
+| `Query.Avg` | 1 | golden:queries.txt:AGG_AVG |
+| `Query.Min` | 1 | golden:queries.txt:AGG_MIN |
+| `Query.Max` | 1 | golden:queries.txt:AGG_MAX |
+| `Query.CountDistinct` | 1 | golden:queries.txt:AGG_DISTINCT |
+| `Query.GroupSum` | 1 | golden:queries.txt:AGG_GSUM |
+| `Query.GroupAvg` | 1 | golden:queries.txt:AGG_GAVG |
+| `Query.Run` | 1 | golden:queries.txt:QVEC |
+| `Db` | 1 | golden:admin.txt:FILEDB |
+| `Db.Open/OpenMemory/Collection/Collections/Backup/Compact` | 6 | golden:admin.txt (COLLECTIONS/BACKUP/COMPACT) |
+| `Collection` | 1 | golden:mutations.txt:COLL |
+| `Collection.Insert/Update/Patch/CompareAndSet` | 4 | golden:mutations.txt (INSERT/UPDATE/PATCH/CAS) |
+| `Collection.Scan(callback, early stop)` | 1 | golden:mutations.txt:SCAN/SCAN_STOP |
+| `Collection.Len (Len()==0 for empty)` | 2 | golden:mutations.txt:LEN |
+| `Collection.PutMany` | 1 | golden:mutations.txt:PUTMANY + golden:schema.txt:PUTMANY_ROLLBACK |
+| `Collection.InsertAuto` | 1 | golden:mutations.txt:INSERT_AUTO |
+| `Collection.Get` | 1 | golden:mutations.txt:GET |
+| `Collection.Delete/DeleteWhere/DeleteBatch` | 3 | golden:mutations.txt (DELETE/DELETE_WHERE/DELETE_BATCH) |
+| `Collection.Scan` | 1 | golden:mutations.txt:SCAN |
+| `Collection.Page / (rows, next)` | 2 | golden:mutations.txt:PAGE |
+| `Row.Score (Query.Vector().Run())` | 1 | golden:queries.txt:QVEC |
+| `Row.Score (Query.Text().Run())` | 1 | golden:queries.txt:QTEXT |
+| `(*Collection).PhraseSearch(field, phrase, k) — the direct positional search (corvid_phrase_search, v0.3.0) over the rows cursor` | 1 | golden:queries.txt:PHRASE |
+| `Query.FuseRRF default k=60` | 1 | golden:queries.txt:HYBRID |
+| `GeoHit { Key, Doc, DistanceKm }` | 1 | golden:geo.txt:RADIUS/NEAREST/BBOX |
+| `Collection.GeoWithinRadius/GeoNearest/GeoWithinBBox/CreateGeoIndex` | 4 | golden:geo.txt (RADIUS/NEAREST/BBOX/IDX_GEO) |
+| `Collection.Link/LinkWeighted/Unlink/Neighbors/InNeighbors/NeighborsWeighted/Traverse` | 7 | golden:graph.txt |
+| `Collection.CreateScalarIndex/CreateCompoundIndex/CreateTextIndex[/OnDisk]/CreateGeoIndex/CreateVectorIndex* (6 variants)` | 10 | golden:schema.txt:IDX_* |
+| `FieldType enum (FieldAny/FieldBool/FieldInt/FieldFloat/FieldText/FieldBytes/FieldVector/FieldArray/FieldMap)` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA |
+| `Collection.SetSchema/Schema + FieldDef { Name, Type, Required, Unique }` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA/SCHEMA_ERR |
+| `Collection.InsertTTL/SetTTL/GetTTL/PurgeExpired` | 4 | golden:mutations.txt (INSERT_TTL/SET_TTL/GET_TTL/PURGE) |
+| `Db.Dump/Load/LoadWithRenames` | 3 | golden:admin.txt (DUMP/LOAD/LOAD_RENAMES) |
+
+159 engine constructs are deliberately not exposed (each with its reason in the repo's `docs/SURFACE.tsv`).
+
+<!-- corvid-api-glance END -->
+
+## API reference
+
+godoc renders the package from its doc comments: [pkg.go.dev/github.com/corvid-db/corvid-go](https://pkg.go.dev/github.com/corvid-db/corvid-go) — also `go doc` locally.
+
 
 ## Value mapping
 
@@ -6296,9 +7682,290 @@ db.close();
 ```
 
 <!-- corvid-examples:hybrid END -->
+### Vector indexes (ANN vs exact)
+
+<!-- corvid-examples:vector_index BEGIN -->
+
+```js
+import { Db } from '../node.mjs';
+
+const PROBE = new Float32Array([1.0, 0.0, 0.0, 0.0]);
+
+const CORPUS = [
+  ['k0', [1.0, 0.0, 0.0, 0.0]], // nearest
+  ['k1', [0.95, 0.05, 0.0, 0.0]],
+  ['k2', [0.0, 1.0, 0.0, 0.0]],
+  ['k3', [0.0, 0.9, 0.1, 0.0]],
+  ['k4', [0.0, 0.0, 1.0, 0.0]],
+  ['k5', [0.7, 0.7, 0.0, 0.0]],
+  ['k6', [0.0, 0.0, 0.0, 1.0]],
+  ['k7', [0.98, 0.02, 0.0, 0.0]],
+];
+
+function runQuery(docs, field, approx, label) {
+  let q = docs.query().vector(field, PROBE, 4, 'cosine');
+  if (approx) q = q.approx();
+  const rows = q.run();
+  const parts = rows.map(({ key, score }) => `${key}(${score.toFixed(6)})`);
+  console.log(label.padEnd(38), parts.join(' '));
+}
+
+const db = new Db();
+const docs = db.collection('items');
+for (const [key, v] of CORPUS) {
+  const vec = new Float32Array(v);
+  docs.insert(key, { v_mem: vec, v_disk: vec, v_q: vec });
+}
+docs.createVectorIndex('v_mem', 'cosine');
+docs.createVectorIndexOndisk('v_disk', 'cosine');
+docs.createVectorIndexQuantized('v_q', 'cosine', 'binary');
+
+console.log('top-4 nearest to (1,0,0,0) under cosine:');
+runQuery(docs, 'v_mem', false, 'exact (scan):');
+runQuery(docs, 'v_mem', true, 'ann in-memory HNSW:');
+runQuery(docs, 'v_disk', true, 'ann on-disk-mode HNSW:');
+runQuery(docs, 'v_q', true, 'ann binary-quantized:');
+console.log('(the quantized lane trades recall for a ~32x smaller index)');
+
+docs.close();
+db.close();
+```
+
+<!-- corvid-examples:vector_index END -->
+### Text search (BM25, CJK, phrases)
+
+<!-- corvid-examples:text_search BEGIN -->
+
+```js
+import { Db } from '../node.mjs';
+
+const db = new Db();
+const notes = db.collection('notes');
+
+notes.insert('n1', { body: 'the quick brown fox jumps over the lazy dog' });
+notes.insert('n2', { body: 'a quick red fox leaps over a sleeping dog' });
+notes.insert('n3', { body: 'slow green turtle crosses the road' });
+notes.insert('n4', { body: '东京是一座巨大的城市' });   // Tokyo is a huge city
+notes.insert('n5', { body: '大阪是关西最大的城市' });   // Osaka is Kansai's biggest city
+notes.insert('n6', { body: '机器学习正在改变数据库' }); // ML is changing databases
+
+notes.createTextIndex('body');
+
+function search(query, label) {
+  const rows = notes.query().text('body', query, 3).run();
+  const parts = rows.map(({ key, score }) => `${key}(${score.toFixed(6)})`);
+  console.log(label.padEnd(28), '->', parts.join(' '));
+}
+
+function phrase(query, label) {
+  const rows = notes.phraseSearch('body', query, 3);
+  const parts = rows.map(({ key, score }) => `${key}(${score.toFixed(6)})`);
+  console.log(label.padEnd(28), '->', parts.join(' '));
+}
+
+search('quick fox', 'bm25 "quick fox":');
+search('quick dog', 'bm25 "quick dog":');
+search('城市', 'bm25 CJK 城市 (city):');
+search('数据库', 'bm25 CJK 数据库 (database):');
+
+phrase('fox jumps over', 'phrase "fox jumps over":');
+phrase('over jumps fox', 'phrase reversed (no match):');
+phrase('leaps over a sleeping', 'phrase stop words collapsed:');
+
+notes.close();
+db.close();
+```
+
+<!-- corvid-examples:text_search END -->
+### Graph (neighbors, traverse, delete cascade)
+
+<!-- corvid-examples:graph BEGIN -->
+
+```js
+import { Db } from '../node.mjs';
+
+const db = new Db();
+const nodes = db.collection('nodes');
+
+for (const key of ['ga', 'gb', 'gc']) nodes.insert(key, { n: key });
+
+nodes.link('ga', 'parent_of', 'gb');
+nodes.link('ga', 'parent_of', 'gc');
+nodes.link('gb', 'parent_of', 'gd'); // gd never exists as a document
+nodes.linkWeighted('ga', 'route', 'gb', 2.5);
+nodes.linkWeighted('ga', 'route', 'gd', 0.75);
+
+const fmt = (keys) => `[${keys.join(' ')}]`;
+console.log('neighbors(ga)'.padEnd(36), fmt(nodes.neighbors('ga', 'parent_of')));
+console.log('in_neighbors(gb)'.padEnd(36), fmt(nodes.inNeighbors('gb', 'parent_of')));
+const routes = nodes
+  .neighborsWeighted('ga', 'route')
+  .map(({ key, weight }) => `${key}=${weight.toFixed(2)}`)
+  .join(' ');
+console.log('routes from ga (weighted):'.padEnd(36), `[${routes}]`);
+console.log('traverse(ga, 1 hop)'.padEnd(36), fmt(nodes.traverse('ga', 'parent_of', 1)));
+console.log('traverse(ga, 2 hops)'.padEnd(36), fmt(nodes.traverse('ga', 'parent_of', 2)));
+
+// Delete cascade: remove gc (a document) and gd (never a document).
+console.log('delete gc: existed=', nodes.delete('gc'));
+console.log('delete gd: existed=', nodes.delete('gd'), '(never a document; its edges still cascade)');
+
+console.log('neighbors(ga) after deletes'.padEnd(36), fmt(nodes.neighbors('ga', 'parent_of')));
+console.log('neighbors(gb) after deletes'.padEnd(36), fmt(nodes.neighbors('gb', 'parent_of')));
+console.log('traverse(ga, 2 hops) after'.padEnd(36), fmt(nodes.traverse('ga', 'parent_of', 2)));
+
+nodes.close();
+db.close();
+```
+
+<!-- corvid-examples:graph END -->
+### Geo (radius, bbox, nearest)
+
+<!-- corvid-examples:geo BEGIN -->
+
+```js
+import { Db } from '../node.mjs';
+
+const db = new Db();
+const places = db.collection('places');
+
+places.insert('berlin', { name: 'berlin', loc: [52.52, 13.4] });
+places.insert('potsdam', { name: 'potsdam', loc: [52.4, 13.06] });
+places.insert('hamburg', { name: 'hamburg', loc: [53.55, 9.99] });
+places.insert('munchen', { name: 'munchen', loc: [48.14, 11.58] });
+
+places.createGeoIndex('loc');
+
+const fmt = (hits) =>
+  `[${hits.map(({ key, distanceKm }) => `${key} ${distanceKm.toFixed(6)}km`).join(' ')}]`;
+
+console.log(
+  'within 600km of Berlin:'.padEnd(34),
+  fmt(places.geoWithinRadius('loc', 52.52, 13.4, 600.0)),
+);
+console.log(
+  'bbox 47..55N, 5..15E:'.padEnd(34),
+  fmt(places.geoWithinBBox('loc', 47, 5, 55, 15)),
+);
+console.log(
+  'nearest 2 to Berlin:'.padEnd(34),
+  fmt(places.geoNearest('loc', 52.52, 13.4, 2)),
+);
+
+places.close();
+db.close();
+```
+
+<!-- corvid-examples:geo END -->
+
+
+
+
 
 The fused scores are RRF rank sums: `s1` is rank 1 of both sources
 (1/61 + 1/61 = 2/61 ≈ 0.032787), `s3` rank 2 of both (2/62 ≈ 0.032258).
+
+## API at a glance
+
+Generated from the binding's `docs/SURFACE.tsv` (every engine
+construct at the pinned tag mapped or N/A with a reason) — regenerated
+by the docs sync, so it cannot drift.
+
+<!-- corvid-api-glance BEGIN -->
+
+| API group | engine constructs | proven by |
+|---|---|---|
+| `the JS value mapping (null/boolean/number/bigint/string/Uint8Array/Float32Array/Array/object)` | 10 | golden:values.txt:VTYPE |
+| `FieldRef eq/ne/lt/le/gt/ge` | 7 | golden:queries.txt:QF_* |
+| `Predicate via field()/and()/or()/not()` | 27 | golden:queries.txt:QF_* + golden:mutations.txt:DELETE_IN |
+| `Metric type ('cosine' | 'dot' | 'l2')` | 4 | golden:queries.txt:QVEC |
+| `Quantization type ('none' | 'binary' | 'scalar')` | 4 | golden:schema.txt:IDX_VEC_Q |
+| `throws CorvidError` | 1 | golden:mutations.txt:INSERT_ERR |
+| `CorvidError.code (ErrorCode table)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.Database (code 1)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.Transaction (code 2)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.Table (code 3)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.Storage (code 4)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.Commit (code 5)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.SetDurability (code 6)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.Compaction (code 7)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.Decode (code 8)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.CorruptIndex (code 9)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.ReservedCollection (code 10)` | 1 | regressions:error-code table is frozen; golden:mutations.txt:INSERT_ERR(err:10) |
+| `ErrorCode.InvalidName (code 11)` | 1 | regressions:error-code table is frozen; golden:mutations.txt:INSERT_ERR(err:11) |
+| `ErrorCode.InvalidArgument (code 12)` | 1 | regressions:error-code table is frozen; golden:mutations.txt:UPDATE_ABORT(err:12) |
+| `ErrorCode.IncompatibleFormat (code 13)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.EmptyIndexTraining (code 14)` | 1 | regressions:error-code table is frozen; golden:schema.txt:IDX_PQ_ERR(err:14) |
+| `ErrorCode.SchemaViolation (code 15)` | 1 | regressions:error-code table is frozen; golden:schema.txt:SCHEMA_ERR(err:15) |
+| `ErrorCode.InvalidDump (code 16)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.BackupTargetExists (code 17)` | 1 | regressions:error-code table is frozen (the code's file-target trigger is unconstructible on wasm) |
+| `ErrorCode.Io (code 18)` | 1 | regressions:error-code table is frozen |
+| `Row { key, doc, score }` | 1 | golden:queries.txt |
+| `Query (Collection.query())` | 2 | golden:queries.txt |
+| `Query.filter` | 1 | golden:queries.txt:QF_COUNT |
+| `Query.vector` | 1 | golden:queries.txt:QVEC |
+| `Query.text` | 1 | golden:queries.txt:QTEXT |
+| `Query.fuseRrf` | 1 | golden:queries.txt:HYBRID_F |
+| `Query.rerankMmr` | 1 | golden:queries.txt:HYBRID |
+| `Query.limit` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.offset` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.orderBy` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.approx` | 1 | golden:queries.txt:APPROX |
+| `Query.select` | 1 | golden:queries.txt:SELECT |
+| `Query.count` | 1 | golden:queries.txt:AGG_COUNT |
+| `Query.groupCount` | 1 | golden:queries.txt:AGG_GCOUNT |
+| `Query.sum` | 1 | golden:queries.txt:AGG_SUM |
+| `Query.avg` | 1 | golden:queries.txt:AGG_AVG |
+| `Query.min` | 1 | golden:queries.txt:AGG_MIN |
+| `Query.max` | 1 | golden:queries.txt:AGG_MAX |
+| `Query.countDistinct` | 1 | golden:queries.txt:AGG_DISTINCT |
+| `Query.groupSum` | 1 | golden:queries.txt:AGG_GSUM |
+| `Query.groupAvg` | 1 | golden:queries.txt:AGG_GAVG |
+| `Query.run` | 1 | golden:queries.txt:QVEC |
+| `Db (new Db() / Db.openMemory)` | 1 | regressions:session durability; golden:queries.txt (COLL/INSERT) |
+| `the persistent twin: openOpfs(name) — the engine Db over an OPFS sync handle in a dedicated Worker, Promise-flavored (ASYNC; docs/OPFS-SPEC.md §3.3); the path form stays unconstructible on wasm32, which is why the seam twin below carries the mechanism` | 1 | e2e:persist.txt FILEDB/REOPEN; opfs-async:cross-tab BUSY + reopen |
+| `new Db() / Db.openMemory()` | 1 | regressions:session durability; golden:mutations.txt:COLL |
+| `OpfsBackend (src/opfs.rs) over the worker's corvidOpfs shims — WasmDb.openOpfs is this seam's binding consumer (ASYNC)` | 1 | opfs-async suite (DirectLink, fake handles) + browser e2e legs (real OPFS) |
+| `Db.collection` | 1 | golden:mutations.txt:COLL |
+| `AsyncDb.backupTo(name) — the physical copy into a second OPFS file; the caller (worker env) owns the exists-check and debris cleanup, exactly the backend form's contract (ASYNC)` | 1 | opfs-async:backupTo (17 on duplicate, no debris); e2e:admin.txt BACKUP/BACKUP_DUP |
+| `WasmDb.backupOpfs(targetHandleId) over a second registered sync handle — the engine seam AsyncDb.backupTo consumes (ASYNC)` | 1 | opfs-async:backupTo debris test; e2e:admin.txt BACKUP |
+| `Db.compact` | 1 | regressions:compact quiescence gate (busy 19 with handles open, quiescent pass, data intact) |
+| `Db.collections` | 1 | regressions:collections listing (admin.txt's in-memory-executable CONTRACT; the file-db scenario is not vendored) |
+| `Collection` | 1 | golden:mutations.txt:COLL |
+| `Collection.insert/update/patch/compareAndSet` | 4 | golden:mutations.txt (INSERT/UPDATE/PATCH/CAS) |
+| `Collection.scanEach` | 1 | golden:mutations.txt:SCAN/SCAN_STOP |
+| `Collection.len / Collection.isEmpty` | 2 | golden:mutations.txt:LEN |
+| `Collection.insertMany` | 1 | golden:mutations.txt:PUTMANY + golden:schema.txt:PUTMANY_ROLLBACK |
+| `Collection.insertAuto` | 1 | golden:mutations.txt:INSERT_AUTO |
+| `Collection.get` | 1 | golden:mutations.txt:GET |
+| `Collection.delete/deleteWhere/deleteBatch` | 3 | golden:mutations.txt (DELETE/DELETE_WHERE/DELETE_BATCH) |
+| `Collection.scan` | 1 | golden:mutations.txt:SCAN |
+| `Collection.page / Page` | 2 | golden:mutations.txt:PAGE |
+| `the OpfsBackend implements this seam — every persistent open goes through it (ASYNC; the engine-side twin is exercised by the engine's own tests/backend.rs)` | 1 | opfs:openOpfs persists across close/reopen; e2e:persist.txt |
+| `the backup target's OpfsBackend — backupOpfs's engine seam (ASYNC)` | 1 | opfs-async:backupTo; e2e:admin.txt BACKUP |
+| `Row.score (Query.vector().run())` | 1 | golden:queries.txt:QVEC |
+| `Row.score (Query.text().run())` | 1 | golden:queries.txt:QTEXT |
+| `Collection.phraseSearch (BM25 phrase-sum scores, order-sensitive adjacency)` | 1 | golden:queries.txt:PHRASE/PHRASE_K0 |
+| `Query.fuseRrf default k=60` | 1 | golden:queries.txt:HYBRID |
+| `GeoHit { key, doc, distanceKm }` | 1 | golden:geo.txt:RADIUS/NEAREST/BBOX |
+| `Collection.geoWithinRadius/geoNearest/geoWithinBBox/createGeoIndex` | 4 | golden:geo.txt (RADIUS/NEAREST/BBOX/IDX_GEO) |
+| `Collection.link/linkWeighted/unlink/neighbors/inNeighbors/neighborsWeighted/traverse` | 7 | golden:graph.txt |
+| `Collection.createScalarIndex/createCompoundIndex/createTextIndex[/Ondisk]/createGeoIndex/createVectorIndex* (6 variants)` | 10 | golden:schema.txt:IDX_* |
+| `FieldType union ('any'|'bool'|'int'|'float'|'text'|'bytes'|'vector'|'array'|'map')` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA |
+| `Collection.setSchema/schema + SchemaField { name, type, required, unique }` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA/SCHEMA_ERR |
+| `Collection.insertWithTtl/setTtl/getTtl/purgeExpired` | 4 | golden:mutations.txt (INSERT_TTL/SET_TTL/GET_TTL/PURGE) |
+| `AsyncDb.dump(): Promise<Uint8Array> — the byte-stream form (a whole-db Vec<u8> in the worker), transferred across the worker boundary (ASYNC)` | 1 | opfs-async:dump/load/renames roundtrip; e2e:admin.txt DUMP/LOAD |
+| `AsyncDb.load(bytes) — merge replay of a dump stream into the open OPFS database (ASYNC)` | 1 | opfs-async:dump/load; e2e:admin.txt LOAD |
+| `AsyncDb.loadWithRenames(bytes, Record<string,string>) — the facade decomposes the map onto the parallel-array wire the wasm layer takes (ASYNC)` | 1 | opfs-async:dump/load/renames; e2e:admin.txt LOAD_RENAMES (incl. the err:11 invalid target) |
+
+155 engine constructs are deliberately not exposed (each with its reason in the repo's `docs/SURFACE.tsv`).
+
+<!-- corvid-api-glance END -->
+
+## API reference
+
+The [TypeScript definitions](https://github.com/corvid-db/corvid-js/blob/master/index.d.ts) in the repo are the reference — editor-inline and versioned with the package (sync + async surfaces, the OPFS types).
+
 
 ## Value mapping
 
@@ -6616,6 +8283,244 @@ fun main() {
 ```
 
 <!-- corvid-examples:hybrid END -->
+### Vector indexes (ANN vs exact)
+
+<!-- corvid-examples:vector_index BEGIN -->
+
+```kotlin
+fun main() {
+    val path = Path.of(System.getProperty("java.io.tmpdir"), "corvid-jvm-example-vector-index.redb")
+    Files.deleteIfExists(path) // reruns start clean (single-file db)
+
+    open(path.toString()).use { db ->
+        val items = db.collection("items")
+        for ((key, v) in corpus) {
+            items.insert(key.toByteArray(), mapOf(
+                "v_mem" to v, "v_disk" to v, "v_q" to v,
+            ))
+        }
+        items.createVectorIndex("v_mem", Metric.COSINE)
+        items.createVectorIndexOnDisk("v_disk", Metric.COSINE)
+        items.createVectorIndexQuantized("v_q", Metric.COSINE, Quant.BINARY)
+
+        println("top-4 nearest to (1,0,0,0) under cosine:")
+        runQuery(items, "v_mem", false, "exact (scan):")
+        runQuery(items, "v_mem", true, "ann in-memory HNSW:")
+        runQuery(items, "v_disk", true, "ann on-disk HNSW:")
+        runQuery(items, "v_q", true, "ann binary-quantized:")
+        println("(the quantized lane trades recall for a ~32x smaller index)")
+
+        items.close()
+    }
+
+    // Reopen: the on-disk graph reloads (no rebuild) and answers again.
+    open(path.toString()).use { db ->
+        val items = db.collection("items")
+        runQuery(items, "v_disk", true, "ann on-disk after reopen:")
+        items.close()
+    }
+
+    Files.deleteIfExists(path)
+}
+```
+
+<!-- corvid-examples:vector_index END -->
+### Text search (BM25, CJK, phrases)
+
+<!-- corvid-examples:text_search BEGIN -->
+
+```kotlin
+fun main() {
+    openMemory().use { db ->
+        val notes = db.collection("notes")
+
+        for ((key, body) in corpus) {
+            notes.insert(key.toByteArray(), mapOf("body" to body))
+        }
+        notes.createTextIndex("body")
+
+        search(notes, "quick fox", "bm25 \"quick fox\":")
+        search(notes, "quick dog", "bm25 \"quick dog\":")
+        search(notes, "城市", "bm25 CJK 城市 (city):")
+        search(notes, "数据库", "bm25 CJK 数据库 (database):")
+
+        phrase(notes, "fox jumps over", "phrase \"fox jumps over\":")
+        phrase(notes, "over jumps fox", "phrase \"over jumps fox\" (reversed — no match):")
+        phrase(notes, "leaps over a sleeping", "phrase with stop words collapsed:")
+
+        notes.close()
+    }
+}
+```
+
+<!-- corvid-examples:text_search END -->
+### Graph (neighbors, traverse, delete cascade)
+
+<!-- corvid-examples:graph BEGIN -->
+
+```kotlin
+fun main() {
+    openMemory().use { db ->
+        val nodes = db.collection("nodes")
+
+        for (key in listOf("ga", "gb", "gc")) {
+            nodes.insert(key.toByteArray(), mapOf("n" to key))
+        }
+
+        nodes.link("ga".toByteArray(), "parent_of", "gb".toByteArray())
+        nodes.link("ga".toByteArray(), "parent_of", "gc".toByteArray())
+        nodes.link("gb".toByteArray(), "parent_of", "gd".toByteArray()) // gd never a document
+        nodes.linkWeighted("ga".toByteArray(), "route", "gb".toByteArray(), 2.5)
+        nodes.linkWeighted("ga".toByteArray(), "route", "gd".toByteArray(), 0.75)
+
+        val ga = "ga".toByteArray()
+        val gb = "gb".toByteArray()
+
+        show("neighbors(ga)", nodes.neighbors(ga, "parent_of"))
+        show("in_neighbors(gb)", nodes.inNeighbors(gb, "parent_of"))
+        val routes = nodes.neighborsWeighted(ga, "route")
+            .joinToString(" ") { r -> "%s=%.2f".format(String(r.key), r.weight) }
+        println("%-36s [%s]".format("routes from ga (weighted):", routes))
+        show("traverse(ga, 1 hop)", nodes.traverse(ga, "parent_of", 1))
+        show("traverse(ga, 2 hops)", nodes.traverse(ga, "parent_of", 2))
+
+        // Delete cascade: remove gc (a document) and gd (never a document).
+        println("delete gc: existed = " + nodes.delete("gc".toByteArray()))
+        val existedGd = nodes.delete("gd".toByteArray())
+        println("delete gd: existed = $existedGd (never a document; its edges still cascade)")
+
+        show("neighbors(ga) after deletes", nodes.neighbors(ga, "parent_of"))
+        show("neighbors(gb) after deletes", nodes.neighbors(gb, "parent_of"))
+        show("traverse(ga, 2 hops) after", nodes.traverse(ga, "parent_of", 2))
+
+        nodes.close()
+    }
+}
+```
+
+<!-- corvid-examples:graph END -->
+### Geo (radius, bbox, nearest)
+
+<!-- corvid-examples:geo BEGIN -->
+
+```kotlin
+fun main() {
+    openMemory().use { db ->
+        val places = db.collection("places")
+
+        for ((name, lat, lon) in cities) {
+            places.insert(name.toByteArray(), mapOf(
+                "name" to name,
+                "loc" to listOf(lat, lon), // the [lat, lon] array encoding
+            ))
+        }
+        places.createGeoIndex("loc")
+
+        show("within 600km of Berlin:", places.geoWithinRadius("loc", 52.52, 13.40, 600.0))
+        show("bbox 47..55N, 5..15E:", places.geoWithinBBox("loc", 47.0, 5.0, 55.0, 15.0))
+        show("nearest 2 to Berlin:", places.geoNearest("loc", 52.52, 13.40, 2))
+
+        places.close()
+    }
+}
+```
+
+<!-- corvid-examples:geo END -->
+
+
+
+
+
+## API at a glance
+
+Generated from the binding's `docs/SURFACE.tsv` (every engine
+construct at the pinned tag mapped or N/A with a reason) — regenerated
+by the docs sync, so it cannot drift.
+
+<!-- corvid-api-glance BEGIN -->
+
+| API group | engine constructs | proven by |
+|---|---|---|
+| `the Kotlin value mapping (null/Boolean/Long/Double/String/ByteArray/FloatArray/List<Any?>/LinkedHashMap<String,Any?>)` | 10 | golden:values.txt:VTYPE |
+| `FieldExpr.eq/ne/lt/le/gt/ge` | 7 | golden:queries.txt:QF_* |
+| `Predicate via field()/Predicate.not()` | 27 | golden:queries.txt:QF_* + golden:mutations.txt:DELETE_IN |
+| `Metric enum (Metric.COSINE/Metric.DOT/Metric.L2)` | 4 | golden:queries.txt:QVEC |
+| `Quant enum (Quant.NONE/Quant.BINARY/Quant.SCALAR)` | 4 | golden:schema.txt:IDX_VEC_Q |
+| `throws CorvidException` | 1 | golden:mutations.txt:INSERT_ERR |
+| `CorvidException.code (ErrCode table)` | 1 | ErrCodesTest.errorCodeTableIsFrozen |
+| `ErrCode.DATABASE (code 1)` | 1 | ErrCodesTest.errorCodeTableIsFrozen |
+| `ErrCode.TRANSACTION (code 2)` | 1 | ErrCodesTest.errorCodeTableIsFrozen |
+| `ErrCode.TABLE (code 3)` | 1 | ErrCodesTest.errorCodeTableIsFrozen |
+| `ErrCode.STORAGE (code 4)` | 1 | ErrCodesTest.errorCodeTableIsFrozen |
+| `ErrCode.COMMIT (code 5)` | 1 | ErrCodesTest.errorCodeTableIsFrozen |
+| `ErrCode.SET_DURABILITY (code 6)` | 1 | ErrCodesTest.errorCodeTableIsFrozen |
+| `ErrCode.COMPACTION (code 7)` | 1 | ErrCodesTest.errorCodeTableIsFrozen |
+| `ErrCode.DECODE (code 8)` | 1 | ErrCodesTest.errorCodeTableIsFrozen |
+| `ErrCode.CORRUPT_INDEX (code 9)` | 1 | ErrCodesTest.errorCodeTableIsFrozen |
+| `ErrCode.RESERVED_COLLECTION (code 10)` | 1 | ErrCodesTest.errorCodeTableIsFrozen; golden:mutations.txt:INSERT_ERR(err:10) |
+| `ErrCode.INVALID_NAME (code 11)` | 1 | ErrCodesTest.errorCodeTableIsFrozen; golden:mutations.txt:INSERT_ERR(err:11) |
+| `ErrCode.ARGUMENT (code 12)` | 1 | ErrCodesTest.errorCodeTableIsFrozen; golden:mutations.txt:UPDATE_ABORT(err:12) |
+| `ErrCode.INCOMPATIBLE_FORMAT (code 13)` | 1 | ErrCodesTest.errorCodeTableIsFrozen |
+| `ErrCode.EMPTY_INDEX_TRAINING (code 14)` | 1 | ErrCodesTest.errorCodeTableIsFrozen; golden:schema.txt:IDX_PQ_ERR(err:14) |
+| `ErrCode.SCHEMA_VIOLATION (code 15)` | 1 | ErrCodesTest.errorCodeTableIsFrozen; golden:schema.txt:SCHEMA_ERR(err:15) |
+| `ErrCode.INVALID_DUMP (code 16)` | 1 | ErrCodesTest.errorCodeTableIsFrozen |
+| `ErrCode.BACKUP_TARGET_EXISTS (code 17)` | 1 | ErrCodesTest.errorCodeTableIsFrozen; golden:admin.txt:BACKUP_DUP(err:17) |
+| `ErrCode.IO (code 18)` | 1 | ErrCodesTest.errorCodeTableIsFrozen |
+| `Row { key, doc, score }` | 1 | golden:queries.txt |
+| `Query (Collection.query())` | 2 | golden:queries.txt |
+| `Query.filter` | 1 | golden:queries.txt:QF_COUNT |
+| `Query.vector` | 1 | golden:queries.txt:QVEC |
+| `Query.text` | 1 | golden:queries.txt:QTEXT |
+| `Query.fuseRRF` | 1 | golden:queries.txt:HYBRID_F |
+| `Query.rerankMMR` | 1 | golden:queries.txt:HYBRID |
+| `Query.limit` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.offset` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.orderBy` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.approx` | 1 | golden:queries.txt:APPROX |
+| `Query.select` | 1 | golden:queries.txt:SELECT |
+| `Query.count` | 1 | golden:queries.txt:AGG_COUNT |
+| `Query.groupCount` | 1 | golden:queries.txt:AGG_GCOUNT |
+| `Query.sum` | 1 | golden:queries.txt:AGG_SUM |
+| `Query.avg` | 1 | golden:queries.txt:AGG_AVG |
+| `Query.min` | 1 | golden:queries.txt:AGG_MIN |
+| `Query.max` | 1 | golden:queries.txt:AGG_MAX |
+| `Query.countDistinct` | 1 | golden:queries.txt:AGG_DISTINCT |
+| `Query.groupSum` | 1 | golden:queries.txt:AGG_GSUM |
+| `Query.groupAvg` | 1 | golden:queries.txt:AGG_GAVG |
+| `Query.run` | 1 | golden:queries.txt:QVEC |
+| `Db` | 1 | golden:admin.txt:FILEDB |
+| `corvid.open/openMemory + Db.collection/collections/backup/compact` | 6 | golden:admin.txt (COLLECTIONS/BACKUP/COMPACT) |
+| `Collection` | 1 | golden:mutations.txt:COLL |
+| `Collection.insert/update/patch/compareAndSet` | 4 | golden:mutations.txt (INSERT/UPDATE/PATCH/CAS) |
+| `Collection.scan(callback, early stop)` | 1 | golden:mutations.txt:SCAN/SCAN_STOP |
+| `Collection.len (len()==0 for empty)` | 2 | golden:mutations.txt:LEN |
+| `Collection.putMany` | 1 | golden:mutations.txt:PUTMANY + golden:schema.txt:PUTMANY_ROLLBACK |
+| `Collection.insertAuto` | 1 | golden:mutations.txt:INSERT_AUTO |
+| `Collection.get` | 1 | golden:mutations.txt:GET |
+| `Collection.delete/deleteWhere/deleteBatch` | 3 | golden:mutations.txt (DELETE/DELETE_WHERE/DELETE_BATCH) |
+| `Collection.scan` | 1 | golden:mutations.txt:SCAN |
+| `Collection.page -> Page(rows, nextAfter)` | 2 | golden:mutations.txt:PAGE |
+| `Row.score (Query.vector().run())` | 1 | golden:queries.txt:QVEC |
+| `Row.score (Query.text().run())` | 1 | golden:queries.txt:QTEXT |
+| `Collection.phraseSearch(field, phrase, k) — the direct positional search (corvid_phrase_search, v0.3.0) over the rows cursor` | 1 | golden:queries.txt:PHRASE |
+| `Query.fuseRRF default k=60` | 1 | golden:queries.txt:HYBRID |
+| `GeoHit { key, doc, distanceKm }` | 1 | golden:geo.txt:RADIUS/NEAREST/BBOX |
+| `Collection.geoWithinRadius/geoNearest/geoWithinBBox/createGeoIndex` | 4 | golden:geo.txt (RADIUS/NEAREST/BBOX/IDX_GEO) |
+| `Collection.link/linkWeighted/unlink/neighbors/inNeighbors/neighborsWeighted/traverse` | 7 | golden:graph.txt |
+| `Collection.createScalarIndex/createCompoundIndex/createTextIndex[/OnDisk]/createGeoIndex/createVectorIndex* (variants)` | 10 | golden:schema.txt:IDX_* |
+| `FieldType enum (FieldType.ANY/BOOL/INT/FLOAT/TEXT/BYTES/VECTOR/ARRAY/MAP)` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA |
+| `Collection.setSchema/schema + FieldDef(name, type, required, unique)` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA/SCHEMA_ERR |
+| `Collection.insertTTL/setTTL/getTTL/purgeExpired` | 4 | golden:mutations.txt (INSERT_TTL/SET_TTL/GET_TTL/PURGE) |
+| `Db.dump/load/loadWithRenames` | 3 | golden:admin.txt (DUMP/LOAD/LOAD_RENAMES) |
+
+159 engine constructs are deliberately not exposed (each with its reason in the repo's `docs/SURFACE.tsv`).
+
+<!-- corvid-api-glance END -->
+
+## API reference
+
+Dokka-generated reference: [corvid-db.github.io/corvid-jvm](https://corvid-db.github.io/corvid-jvm/) — published from the same sources the artifact builds.
+
 
 ## The correctness floor
 
@@ -6780,9 +8685,295 @@ db.close();
 ```
 
 <!-- corvid-examples:hybrid END -->
+### Vector indexes (ANN vs exact)
+
+<!-- corvid-examples:vector_index BEGIN -->
+
+```js
+const { rmSync } = require('node:fs');
+const { join } = require('node:path');
+const { tmpdir } = require('node:os');
+
+const { Db } = require('..');
+
+const PATH = join(tmpdir(), 'corvid-node-example-vector-index.redb');
+const PROBE = new Float32Array([1.0, 0.0, 0.0, 0.0]);
+
+const CORPUS = [
+  ['k0', [1.0, 0.0, 0.0, 0.0]], // nearest
+  ['k1', [0.95, 0.05, 0.0, 0.0]],
+  ['k2', [0.0, 1.0, 0.0, 0.0]],
+  ['k3', [0.0, 0.9, 0.1, 0.0]],
+  ['k4', [0.0, 0.0, 1.0, 0.0]],
+  ['k5', [0.7, 0.7, 0.0, 0.0]],
+  ['k6', [0.0, 0.0, 0.0, 1.0]],
+  ['k7', [0.98, 0.02, 0.0, 0.0]],
+];
+
+function runQuery(docs, field, approx, label) {
+  let q = docs.query().vector(field, PROBE, 4, 'cosine');
+  if (approx) q = q.approx();
+  const rows = q.run();
+  const parts = rows.map(({ key, score }) => `${key}(${score.toFixed(6)})`);
+  console.log(label.padEnd(38), parts.join(' '));
+}
+
+rmSync(PATH, { force: true }); // reruns start clean (single-file db)
+
+let db = Db.open(PATH);
+let docs = db.collection('items');
+for (const [key, v] of CORPUS) {
+  const vec = new Float32Array(v);
+  docs.insert(key, { v_mem: vec, v_disk: vec, v_q: vec });
+}
+docs.createVectorIndex('v_mem', 'cosine');
+docs.createVectorIndexOndisk('v_disk', 'cosine');
+docs.createVectorIndexQuantized('v_q', 'cosine', 'binary');
+
+console.log('top-4 nearest to (1,0,0,0) under cosine:');
+runQuery(docs, 'v_mem', false, 'exact (scan):');
+runQuery(docs, 'v_mem', true, 'ann in-memory HNSW:');
+runQuery(docs, 'v_disk', true, 'ann on-disk HNSW:');
+runQuery(docs, 'v_q', true, 'ann binary-quantized:');
+console.log('(the quantized lane trades recall for a ~32x smaller index)');
+
+docs.close();
+db.close();
+
+// Reopen: the on-disk graph reloads (no rebuild) and answers again.
+db = Db.open(PATH);
+docs = db.collection('items');
+runQuery(docs, 'v_disk', true, 'ann on-disk after reopen:');
+docs.close();
+db.close();
+
+rmSync(PATH, { force: true });
+```
+
+<!-- corvid-examples:vector_index END -->
+### Text search (BM25, CJK, phrases)
+
+<!-- corvid-examples:text_search BEGIN -->
+
+```js
+const { Db } = require('..');
+
+const db = Db.openMemory();
+const notes = db.collection('notes');
+
+notes.insert('n1', { body: 'the quick brown fox jumps over the lazy dog' });
+notes.insert('n2', { body: 'a quick red fox leaps over a sleeping dog' });
+notes.insert('n3', { body: 'slow green turtle crosses the road' });
+notes.insert('n4', { body: '东京是一座巨大的城市' });   // Tokyo is a huge city
+notes.insert('n5', { body: '大阪是关西最大的城市' });   // Osaka is Kansai's biggest city
+notes.insert('n6', { body: '机器学习正在改变数据库' }); // ML is changing databases
+
+notes.createTextIndex('body');
+
+function search(query, label) {
+  const rows = notes.query().text('body', query, 3).run();
+  const parts = rows.map(({ key, score }) => `${key}(${score.toFixed(6)})`);
+  console.log(label.padEnd(28), '->', parts.join(' '));
+}
+
+function phrase(query, label) {
+  const rows = notes.phraseSearch('body', query, 3);
+  const parts = rows.map(({ key, score }) => `${key}(${score.toFixed(6)})`);
+  console.log(label.padEnd(28), '->', parts.join(' '));
+}
+
+search('quick fox', 'bm25 "quick fox":');
+search('quick dog', 'bm25 "quick dog":');
+search('城市', 'bm25 CJK 城市 (city):');
+search('数据库', 'bm25 CJK 数据库 (database):');
+
+phrase('fox jumps over', 'phrase "fox jumps over":');
+phrase('over jumps fox', 'phrase reversed (no match):');
+phrase('leaps over a sleeping', 'phrase stop words collapsed:');
+
+notes.close();
+db.close();
+```
+
+<!-- corvid-examples:text_search END -->
+### Graph (neighbors, traverse, delete cascade)
+
+<!-- corvid-examples:graph BEGIN -->
+
+```js
+const { Db } = require('..');
+
+const db = Db.openMemory();
+const nodes = db.collection('nodes');
+
+for (const key of ['ga', 'gb', 'gc']) nodes.insert(key, { n: key });
+
+nodes.link('ga', 'parent_of', 'gb');
+nodes.link('ga', 'parent_of', 'gc');
+nodes.link('gb', 'parent_of', 'gd'); // gd never exists as a document
+nodes.linkWeighted('ga', 'route', 'gb', 2.5);
+nodes.linkWeighted('ga', 'route', 'gd', 0.75);
+
+const fmt = (keys) => `[${keys.join(' ')}]`;
+console.log('neighbors(ga)'.padEnd(36), fmt(nodes.neighbors('ga', 'parent_of')));
+console.log('in_neighbors(gb)'.padEnd(36), fmt(nodes.inNeighbors('gb', 'parent_of')));
+const routes = nodes
+  .neighborsWeighted('ga', 'route')
+  .map(({ key, weight }) => `${key}=${weight.toFixed(2)}`)
+  .join(' ');
+console.log('routes from ga (weighted):'.padEnd(36), `[${routes}]`);
+console.log('traverse(ga, 1 hop)'.padEnd(36), fmt(nodes.traverse('ga', 'parent_of', 1)));
+console.log('traverse(ga, 2 hops)'.padEnd(36), fmt(nodes.traverse('ga', 'parent_of', 2)));
+
+// Delete cascade: remove gc (a document) and gd (never a document).
+console.log('delete gc: existed=', nodes.delete('gc'));
+console.log('delete gd: existed=', nodes.delete('gd'), '(never a document; its edges still cascade)');
+
+console.log('neighbors(ga) after deletes'.padEnd(36), fmt(nodes.neighbors('ga', 'parent_of')));
+console.log('neighbors(gb) after deletes'.padEnd(36), fmt(nodes.neighbors('gb', 'parent_of')));
+console.log('traverse(ga, 2 hops) after'.padEnd(36), fmt(nodes.traverse('ga', 'parent_of', 2)));
+
+nodes.close();
+db.close();
+```
+
+<!-- corvid-examples:graph END -->
+### Geo (radius, bbox, nearest)
+
+<!-- corvid-examples:geo BEGIN -->
+
+```js
+const { Db } = require('..');
+
+const db = Db.openMemory();
+const places = db.collection('places');
+
+places.insert('berlin', { name: 'berlin', loc: [52.52, 13.4] });
+places.insert('potsdam', { name: 'potsdam', loc: [52.4, 13.06] });
+places.insert('hamburg', { name: 'hamburg', loc: [53.55, 9.99] });
+places.insert('munchen', { name: 'munchen', loc: [48.14, 11.58] });
+
+places.createGeoIndex('loc');
+
+const fmt = (hits) =>
+  `[${hits.map(({ key, distanceKm }) => `${key} ${distanceKm.toFixed(6)}km`).join(' ')}]`;
+
+console.log(
+  'within 600km of Berlin:'.padEnd(34),
+  fmt(places.geoWithinRadius('loc', 52.52, 13.4, 600.0)),
+);
+console.log(
+  'bbox 47..55N, 5..15E:'.padEnd(34),
+  fmt(places.geoWithinBBox('loc', 47, 5, 55, 15)),
+);
+console.log(
+  'nearest 2 to Berlin:'.padEnd(34),
+  fmt(places.geoNearest('loc', 52.52, 13.4, 2)),
+);
+
+places.close();
+db.close();
+```
+
+<!-- corvid-examples:geo END -->
+
+
+
+
 
 The fused scores are RRF rank sums: `s1` is rank 1 of both sources
 (1/61 + 1/61 = 2/61 ≈ 0.032787), `s3` rank 2 of both (2/62 ≈ 0.032258).
+
+## API at a glance
+
+Generated from the binding's `docs/SURFACE.tsv` (every engine
+construct at the pinned tag mapped or N/A with a reason) — regenerated
+by the docs sync, so it cannot drift.
+
+<!-- corvid-api-glance BEGIN -->
+
+| API group | engine constructs | proven by |
+|---|---|---|
+| `the JS value mapping (null/boolean/number/bigint/string/Buffer/Float32Array/Array/object)` | 10 | golden:values.txt:VTYPE |
+| `FieldRef eq/ne/lt/le/gt/ge` | 7 | golden:queries.txt:QF_* |
+| `Predicate via field()/and()/or()/not()` | 27 | golden:queries.txt:QF_* + golden:mutations.txt:DELETE_IN |
+| `Metric type ('cosine' | 'dot' | 'l2')` | 4 | golden:queries.txt:QVEC |
+| `Quantization type ('none' | 'binary' | 'scalar')` | 4 | golden:schema.txt:IDX_VEC_Q |
+| `throws CorvidError` | 1 | golden:mutations.txt:INSERT_ERR |
+| `CorvidError.code (ErrorCode table)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.Database (code 1)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.Transaction (code 2)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.Table (code 3)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.Storage (code 4)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.Commit (code 5)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.SetDurability (code 6)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.Compaction (code 7)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.Decode (code 8)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.CorruptIndex (code 9)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.ReservedCollection (code 10)` | 1 | regressions:error-code table is frozen; golden:mutations.txt:INSERT_ERR(err:10) |
+| `ErrorCode.InvalidName (code 11)` | 1 | regressions:error-code table is frozen; golden:mutations.txt:INSERT_ERR(err:11) |
+| `ErrorCode.InvalidArgument (code 12)` | 1 | regressions:error-code table is frozen; golden:mutations.txt:UPDATE_ABORT(err:12) |
+| `ErrorCode.IncompatibleFormat (code 13)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.EmptyIndexTraining (code 14)` | 1 | regressions:error-code table is frozen; golden:schema.txt:IDX_PQ_ERR(err:14) |
+| `ErrorCode.SchemaViolation (code 15)` | 1 | regressions:error-code table is frozen; golden:schema.txt:SCHEMA_ERR(err:15) |
+| `ErrorCode.InvalidDump (code 16)` | 1 | regressions:error-code table is frozen |
+| `ErrorCode.BackupTargetExists (code 17)` | 1 | regressions:error-code table is frozen; golden:admin.txt:BACKUP_DUP(err:17) |
+| `ErrorCode.Io (code 18)` | 1 | regressions:error-code table is frozen |
+| `Row { key, doc, score }` | 1 | golden:queries.txt |
+| `Query (Collection.query())` | 2 | golden:queries.txt |
+| `Query.filter` | 1 | golden:queries.txt:QF_COUNT |
+| `Query.vector` | 1 | golden:queries.txt:QVEC |
+| `Query.text` | 1 | golden:queries.txt:QTEXT |
+| `Query.fuseRrf` | 1 | golden:queries.txt:HYBRID_F |
+| `Query.rerankMmr` | 1 | golden:queries.txt:HYBRID |
+| `Query.limit` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.offset` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.orderBy` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.approx` | 1 | golden:queries.txt:APPROX |
+| `Query.select` | 1 | golden:queries.txt:SELECT |
+| `Query.count` | 1 | golden:queries.txt:AGG_COUNT |
+| `Query.groupCount` | 1 | golden:queries.txt:AGG_GCOUNT |
+| `Query.sum` | 1 | golden:queries.txt:AGG_SUM |
+| `Query.avg` | 1 | golden:queries.txt:AGG_AVG |
+| `Query.min` | 1 | golden:queries.txt:AGG_MIN |
+| `Query.max` | 1 | golden:queries.txt:AGG_MAX |
+| `Query.countDistinct` | 1 | golden:queries.txt:AGG_DISTINCT |
+| `Query.groupSum` | 1 | golden:queries.txt:AGG_GSUM |
+| `Query.groupAvg` | 1 | golden:queries.txt:AGG_GAVG |
+| `Query.run` | 1 | golden:queries.txt:QVEC |
+| `Db` | 1 | golden:admin.txt:FILEDB |
+| `Db.open/openMemory/collection/collections/backup/compact` | 6 | golden:admin.txt (COLLECTIONS/BACKUP/COMPACT) |
+| `Collection` | 1 | golden:mutations.txt:COLL |
+| `Collection.insert/update/patch/compareAndSet` | 4 | golden:mutations.txt (INSERT/UPDATE/PATCH/CAS) |
+| `Collection.scanEach` | 1 | golden:mutations.txt:SCAN/SCAN_STOP |
+| `Collection.len / Collection.isEmpty` | 2 | golden:mutations.txt:LEN |
+| `Collection.insertMany` | 1 | golden:mutations.txt:PUTMANY + golden:schema.txt:PUTMANY_ROLLBACK |
+| `Collection.insertAuto` | 1 | golden:mutations.txt:INSERT_AUTO |
+| `Collection.get` | 1 | golden:mutations.txt:GET |
+| `Collection.delete/deleteWhere/deleteBatch` | 3 | golden:mutations.txt (DELETE/DELETE_WHERE/DELETE_BATCH) |
+| `Collection.scan` | 1 | golden:mutations.txt:SCAN |
+| `Collection.page / Page` | 2 | golden:mutations.txt:PAGE |
+| `Row.score (Query.vector().run())` | 1 | golden:queries.txt:QVEC |
+| `Row.score (Query.text().run())` | 1 | golden:queries.txt:QTEXT |
+| `Collection#phraseSearch(field, phrase, k) — the direct positional search over the engine method` | 1 | golden:queries.txt:PHRASE |
+| `Query.fuseRrf default k=60` | 1 | golden:queries.txt:HYBRID |
+| `GeoHit { key, doc, distanceKm }` | 1 | golden:geo.txt:RADIUS/NEAREST/BBOX |
+| `Collection.geoWithinRadius/geoNearest/geoWithinBBox/createGeoIndex` | 4 | golden:geo.txt (RADIUS/NEAREST/BBOX/IDX_GEO) |
+| `Collection.link/linkWeighted/unlink/neighbors/inNeighbors/neighborsWeighted/traverse` | 7 | golden:graph.txt |
+| `Collection.createScalarIndex/createCompoundIndex/createTextIndex[/Ondisk]/createGeoIndex/createVectorIndex* (6 variants)` | 10 | golden:schema.txt:IDX_* |
+| `FieldType union ('any'|'bool'|'int'|'float'|'text'|'bytes'|'vector'|'array'|'map')` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA |
+| `Collection.setSchema/schema + SchemaField { name, type, required, unique }` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA/SCHEMA_ERR |
+| `Collection.insertWithTtl/setTtl/getTtl/purgeExpired` | 4 | golden:mutations.txt (INSERT_TTL/SET_TTL/GET_TTL/PURGE) |
+| `Db.dumpToPath/loadFromPath/loadFromPathWithRenames` | 3 | golden:admin.txt (DUMP/LOAD/LOAD_RENAMES) |
+
+159 engine constructs are deliberately not exposed (each with its reason in the repo's `docs/SURFACE.tsv`).
+
+<!-- corvid-api-glance END -->
+
+## API reference
+
+The [TypeScript definitions](https://github.com/corvid-db/corvid-node/blob/master/index.d.ts) in the repo (`index.d.ts` + the generated `index-native.d.ts`) are the reference — editor-inline and versioned with the package.
+
 
 ## Value mapping
 
@@ -7001,6 +9192,316 @@ foreach ($rows as $rank => $r) {
 ```
 
 <!-- corvid-examples:hybrid END -->
+### Vector indexes (ANN vs exact)
+
+<!-- corvid-examples:vector_index BEGIN -->
+
+```php
+$path = sys_get_temp_dir() . '/corvid-php-example-vector-index.redb';
+@unlink($path); // reruns start clean (single-file db)
+
+$corpus = [
+    ['k0', [1.0, 0.0, 0.0, 0.0]], // nearest
+    ['k1', [0.95, 0.05, 0.0, 0.0]],
+    ['k2', [0.0, 1.0, 0.0, 0.0]],
+    ['k3', [0.0, 0.9, 0.1, 0.0]],
+    ['k4', [0.0, 0.0, 1.0, 0.0]],
+    ['k5', [0.7, 0.7, 0.0, 0.0]],
+    ['k6', [0.0, 0.0, 0.0, 1.0]],
+    ['k7', [0.98, 0.02, 0.0, 0.0]],
+];
+$probe = [1.0, 0.0, 0.0, 0.0];
+
+function runQuery(Corvid\Collection $items, string $field, bool $approx, string $label, array $probe): void
+{
+    $q = $items->query()->vector($field, new Corvid\Vector($probe), 4, Corvid\Metric::COSINE);
+    if ($approx) {
+        $q->approx();
+    }
+    $rows = $q->run();
+    printf('%-38s', $label);
+    foreach ($rows as $r) {
+        printf(' %s(%.6f)', $r->key, $r->score);
+    }
+    echo "\n";
+}
+
+$db = Corvid\Db::open($path);
+$items = $db->collection('items');
+foreach ($corpus as [$key, $v]) {
+    $items->insert($key, [
+        'v_mem' => new Corvid\Vector($v),
+        'v_disk' => new Corvid\Vector($v),
+        'v_q' => new Corvid\Vector($v),
+    ]);
+}
+$items->createVectorIndex('v_mem', Corvid\Metric::COSINE);
+$items->createVectorIndexOnDisk('v_disk', Corvid\Metric::COSINE);
+$items->createVectorIndexQuantized('v_q', Corvid\Metric::COSINE, Corvid\Quant::BINARY);
+
+echo "top-4 nearest to (1,0,0,0) under cosine:\n";
+runQuery($items, 'v_mem', false, 'exact (scan):', $probe);
+runQuery($items, 'v_mem', true, 'ann in-memory HNSW:', $probe);
+runQuery($items, 'v_disk', true, 'ann on-disk HNSW:', $probe);
+runQuery($items, 'v_q', true, 'ann binary-quantized:', $probe);
+echo "(the quantized lane trades recall for a ~32x smaller index)\n";
+
+unset($items); // free the derived handle before close
+$db->close();
+
+// Reopen: the on-disk graph reloads (no rebuild) and answers again.
+$db = Corvid\Db::open($path);
+$items = $db->collection('items');
+runQuery($items, 'v_disk', true, 'ann on-disk after reopen:', $probe);
+```
+
+<!-- corvid-examples:vector_index END -->
+### Text search (BM25, CJK, phrases)
+
+<!-- corvid-examples:text_search BEGIN -->
+
+```php
+$corpus = [
+    ['n1', 'the quick brown fox jumps over the lazy dog'],
+    ['n2', 'a quick red fox leaps over a sleeping dog'],
+    ['n3', 'slow green turtle crosses the road'],
+    ['n4', '东京是一座巨大的城市'],  // Tokyo is a huge city
+    ['n5', '大阪是关西最大的城市'],  // Osaka is Kansai's biggest city
+    ['n6', '机器学习正在改变数据库'], // ML is changing databases
+];
+
+function search(Collection $notes, string $query, string $label): void
+{
+    $rows = $notes->query()->text('body', $query, 3)->run();
+    printf('%-28s ->', $label);
+    foreach ($rows as $r) {
+        printf(' %s(%.6f)', $r->key, $r->score);
+    }
+    echo "\n";
+}
+
+function phrase(Collection $notes, string $query, string $label): void
+{
+    $rows = $notes->phraseSearch('body', $query, 3);
+    printf('%-28s ->', $label);
+    foreach ($rows as $r) {
+        printf(' %s(%.6f)', $r->key, $r->score);
+    }
+    echo "\n";
+}
+
+$db = Corvid\Db::openMemory();
+$notes = $db->collection('notes');
+foreach ($corpus as [$key, $body]) {
+    $notes->insert($key, ['body' => $body]);
+}
+$notes->createTextIndex('body');
+
+search($notes, 'quick fox', 'bm25 "quick fox":');
+search($notes, 'quick dog', 'bm25 "quick dog":');
+search($notes, '城市', 'bm25 CJK 城市 (city):');
+search($notes, '数据库', 'bm25 CJK 数据库 (database):');
+
+phrase($notes, 'fox jumps over', 'phrase "fox jumps over":');
+phrase($notes, 'over jumps fox', 'phrase "over jumps fox" (reversed — no match):');
+phrase($notes, 'leaps over a sleeping', 'phrase with stop words collapsed:');
+```
+
+<!-- corvid-examples:text_search END -->
+### Graph (neighbors, traverse, delete cascade)
+
+<!-- corvid-examples:graph BEGIN -->
+
+```php
+function show(string $label, array $keys): void
+{
+    printf("%-36s [%s]\n", $label, implode(' ', $keys));
+}
+
+$db = Corvid\Db::openMemory();
+$nodes = $db->collection('nodes');
+
+foreach (['ga', 'gb', 'gc'] as $key) {
+    $nodes->insert($key, ['n' => $key]);
+}
+
+$nodes->link('ga', 'parent_of', 'gb');
+$nodes->link('ga', 'parent_of', 'gc');
+$nodes->link('gb', 'parent_of', 'gd'); // gd never exists as a document
+$nodes->linkWeighted('ga', 'route', 'gb', 2.5);
+$nodes->linkWeighted('ga', 'route', 'gd', 0.75);
+
+show('neighbors(ga)', $nodes->neighbors('ga', 'parent_of'));
+show('in_neighbors(gb)', $nodes->inNeighbors('gb', 'parent_of'));
+
+$routes = $nodes->neighborsWeighted('ga', 'route');
+$parts = [];
+foreach ($routes as $r) {
+    $parts[] = sprintf('%s=%.2f', $r->key, $r->weight);
+}
+printf("%-36s [%s]\n", 'routes from ga (weighted):', implode(' ', $parts));
+
+show('traverse(ga, 1 hop)', $nodes->traverse('ga', 'parent_of', 1));
+show('traverse(ga, 2 hops)', $nodes->traverse('ga', 'parent_of', 2));
+
+// Delete cascade: remove gc (a document) and gd (never a document).
+printf("delete gc: existed = %s\n", $nodes->delete('gc') ? 'true' : 'false');
+printf("delete gd: existed = %s (never a document; its edges still cascade)\n", $nodes->delete('gd') ? 'true' : 'false');
+
+show('neighbors(ga) after deletes', $nodes->neighbors('ga', 'parent_of'));
+show('neighbors(gb) after deletes', $nodes->neighbors('gb', 'parent_of'));
+show('traverse(ga, 2 hops) after', $nodes->traverse('ga', 'parent_of', 2));
+```
+
+<!-- corvid-examples:graph END -->
+### Geo (radius, bbox, nearest)
+
+<!-- corvid-examples:geo BEGIN -->
+
+```php
+$cities = [
+    ['berlin', 52.52, 13.40],
+    ['potsdam', 52.40, 13.06],
+    ['hamburg', 53.55, 9.99],
+    ['munchen', 48.14, 11.58],
+];
+
+function show(string $label, array $hits): void
+{
+    $parts = [];
+    foreach ($hits as $h) {
+        $parts[] = sprintf('%s %.6fkm', $h->key, $h->distanceKm);
+    }
+    printf("%-34s [%s]\n", $label, implode(' ', $parts));
+}
+
+$db = Corvid\Db::openMemory();
+$places = $db->collection('places');
+
+foreach ($cities as [$name, $lat, $lon]) {
+    $places->insert($name, [
+        'name' => $name,
+        'loc' => [$lat, $lon], // the [lat, lon] array encoding
+    ]);
+}
+$places->createGeoIndex('loc');
+
+show('within 600km of Berlin:', $places->geoWithinRadius('loc', 52.52, 13.40, 600.0));
+show('bbox 47..55N, 5..15E:', $places->geoWithinBBox('loc', 47, 5, 55, 15));
+show('nearest 2 to Berlin:', $places->geoNearest('loc', 52.52, 13.40, 2));
+```
+
+<!-- corvid-examples:geo END -->
+
+
+
+
+
+## API at a glance
+
+Generated from the binding's `docs/SURFACE.tsv` (every engine
+construct at the pinned tag mapped or N/A with a reason) — regenerated
+by the docs sync, so it cannot drift.
+
+<!-- corvid-api-glance BEGIN -->
+
+| API group | engine constructs | proven by |
+|---|---|---|
+| `the PHP value mapping (null/bool/int/float/string Text/Corvid\Bytes/Corvid\Vector/array/Map)` | 10 | golden:values.txt:VTYPE |
+| `the encode recursion enforces the same inclusive 128 container-depth cap (PHP_CORVID_MAX_NESTING, mirroring value.rs); a deeper value throws a clean CODE_ARGUMENT instead of unbounded C recursion` | 1 | BindingTest::testEncodingDeeperThanMaxNestingIsRejectedCleanly + testMaxNestingBoundaryRoundTrips |
+| `Corvid\Values::asBool() — null on wrong type (the engine Option convention)` | 1 | golden:values.txt:VAS_BOOL |
+| `Corvid\Values::asInt() — null on wrong type (the engine Option convention)` | 1 | golden:values.txt:VAS_INT |
+| `Corvid\Values::asFloat() — null on wrong type; NaN/±INF/-0.0 bit-exact` | 1 | golden:values.txt:VAS_FLOAT |
+| `Corvid\Values::asText() — null on wrong type (the _ref reads through the mapping)` | 1 | golden:values.txt:VTEXT_REF |
+| `Corvid\Values::asBytes() — binary-safe Corvid\Bytes, null on wrong type` | 1 | golden:values.txt:VBYTES_REF |
+| `Corvid\Values::asVector() — f32-payload Corvid\Vector, null on wrong type` | 1 | golden:values.txt:VVECTOR_REF |
+| `FieldExpr.Eq/Ne/Lt/Le/Gt/Ge` | 7 | golden:queries.txt:QF_* |
+| `Corvid\Field eq/ne/lt/le/gt/ge/in/between/startsWith/contains/geoWithin/exists + Predicate and()/or()/not()` | 27 | golden:queries.txt:QF_* + golden:mutations.txt:DELETE_IN |
+| `Corvid\Metric::COSINE/DOT/L2 constants (frozen ABI values)` | 4 | golden:queries.txt:QVEC |
+| `Corvid\Quant::NONE/BINARY/SCALAR constants (frozen ABI values)` | 4 | golden:schema.txt:IDX_VEC_Q |
+| `throws Corvid\Exception (getCode() = corvid_err)` | 1 | golden:mutations.txt:INSERT_ERR |
+| `Corvid\Exception::getCode() (the CODE_* constants table)` | 1 | TestErrorCodeTable |
+| `CODE_DATABASE (1)` | 1 | TestErrorCodeTable |
+| `CODE_TRANSACTION (2)` | 1 | TestErrorCodeTable |
+| `CODE_TABLE (3)` | 1 | TestErrorCodeTable |
+| `CODE_STORAGE (4)` | 1 | TestErrorCodeTable |
+| `CODE_COMMIT (5)` | 1 | TestErrorCodeTable |
+| `CODE_SET_DURABILITY (6)` | 1 | TestErrorCodeTable |
+| `CODE_COMPACTION (7)` | 1 | TestErrorCodeTable |
+| `CODE_DECODE (8)` | 1 | TestErrorCodeTable |
+| `CODE_CORRUPT_INDEX (9)` | 1 | TestErrorCodeTable |
+| `CODE_RESERVED_COLLECTION (10)` | 1 | TestErrorCodeTable; golden:mutations.txt:INSERT_ERR(err:10) |
+| `CODE_INVALID_NAME (11)` | 1 | TestErrorCodeTable; golden:mutations.txt:INSERT_ERR(err:11) |
+| `CODE_ARGUMENT (12)` | 1 | TestErrorCodeTable; golden:mutations.txt:UPDATE_ABORT(err:12) |
+| `CODE_INCOMPATIBLE_FORMAT (13)` | 1 | TestErrorCodeTable |
+| `CODE_EMPTY_INDEX_TRAINING (14)` | 1 | TestErrorCodeTable; golden:schema.txt:IDX_PQ_ERR(err:14) |
+| `CODE_SCHEMA_VIOLATION (15)` | 1 | TestErrorCodeTable; golden:schema.txt:SCHEMA_ERR(err:15) |
+| `CODE_INVALID_DUMP (16)` | 1 | TestErrorCodeTable |
+| `CODE_BACKUP_TARGET_EXISTS (17)` | 1 | TestErrorCodeTable; golden:admin.txt:BACKUP_DUP(err:17) |
+| `CODE_IO (18)` | 1 | TestErrorCodeTable |
+| `Corvid\Row { key, doc, score }` | 1 | golden:queries.txt |
+| `Corvid\Query (Collection->query())` | 2 | golden:queries.txt |
+| `Query->filter()` | 1 | golden:queries.txt:QF_COUNT |
+| `Query->vector()` | 1 | golden:queries.txt:QVEC |
+| `Query->text()` | 1 | golden:queries.txt:QTEXT |
+| `Query->fuseRrf()` | 1 | golden:queries.txt:HYBRID_F |
+| `Query->rerankMmr()` | 1 | golden:queries.txt:HYBRID |
+| `Query->limit()` | 1 | golden:queries.txt:ORDER_BY |
+| `Query->offset()` | 1 | golden:queries.txt:ORDER_BY |
+| `Query->orderBy()` | 1 | golden:queries.txt:ORDER_BY |
+| `Query->approx()` | 1 | golden:queries.txt:APPROX |
+| `Query->select()` | 1 | golden:queries.txt:SELECT |
+| `Query->count()` | 1 | golden:queries.txt:AGG_COUNT |
+| `Query->groupCount()` | 1 | golden:queries.txt:AGG_GCOUNT |
+| `Query->sum()` | 1 | golden:queries.txt:AGG_SUM |
+| `Query->avg()` | 1 | golden:queries.txt:AGG_AVG |
+| `Query->min()` | 1 | golden:queries.txt:AGG_MIN |
+| `Query->max()` | 1 | golden:queries.txt:AGG_MAX |
+| `Query->countDistinct()` | 1 | golden:queries.txt:AGG_DISTINCT |
+| `Query->groupSum()` | 1 | golden:queries.txt:AGG_GSUM |
+| `Query->groupAvg()` | 1 | golden:queries.txt:AGG_GAVG |
+| `Query->run()` | 1 | golden:queries.txt:QVEC |
+| `Corvid\Db` | 1 | golden:admin.txt:FILEDB |
+| `Db::open(path) — file-backed` | 1 | golden:admin.txt:FILEDB |
+| `Db::openMemory()` | 1 | golden:mutations.txt (every non-values fixture opens via Db::openMemory()) |
+| `Db->collection(name) -> Corvid\Collection` | 1 | golden:admin.txt:COLL |
+| `Db->backup(path)` | 1 | golden:admin.txt:BACKUP |
+| `Db->compact()` | 1 | golden:admin.txt:COMPACT |
+| `Db->collections() -> string[]` | 1 | golden:admin.txt:COLLECTIONS |
+| `Collection` | 1 | golden:mutations.txt:COLL |
+| `Collection->insert(key, doc)` | 1 | golden:mutations.txt (INSERT/UPDATE/PATCH/CAS) |
+| `Collection->update(key, callable)` | 1 | golden:mutations.txt (INSERT/UPDATE/PATCH/CAS) |
+| `Collection->patch(key, patch)` | 1 | golden:mutations.txt (INSERT/UPDATE/PATCH/CAS) |
+| `Collection->compareAndSet(key, expected, replacement)` | 1 | golden:mutations.txt (INSERT/UPDATE/PATCH/CAS) |
+| `Collection->scan(callable, early stop on false)` | 1 | golden:mutations.txt:SCAN/SCAN_STOP |
+| `Collection->len() (0 for empty)` | 2 | golden:mutations.txt:LEN |
+| `Collection->putMany()` | 1 | golden:mutations.txt:PUTMANY + golden:schema.txt:PUTMANY_ROLLBACK |
+| `Collection->insertAuto()` | 1 | golden:mutations.txt:INSERT_AUTO |
+| `Collection->get()` | 1 | golden:mutations.txt:GET |
+| `Collection->delete()/deleteWhere()/deleteBatch()` | 3 | golden:mutations.txt (DELETE/DELETE_WHERE/DELETE_BATCH) |
+| `Collection->scan()` | 1 | golden:mutations.txt:SCAN |
+| `Collection->page() -> Corvid\Page { rows, next }` | 2 | golden:mutations.txt:PAGE |
+| `Corvid\Row->score (Query->vector()->run())` | 1 | golden:queries.txt:QVEC |
+| `Corvid\Row->score (Query->text()->run())` | 1 | golden:queries.txt:QTEXT |
+| `Collection->phraseSearch(field, phrase, k) — the direct positional search (corvid_phrase_search, v0.3.0) over the rows cursor` | 1 | golden:queries.txt:PHRASE |
+| `Query->fuseRrf() default k=60` | 1 | golden:queries.txt:HYBRID |
+| `Corvid\GeoHit { key, doc, distanceKm }` | 1 | golden:geo.txt:RADIUS/NEAREST/BBOX |
+| `Collection->geoWithinRadius()/geoNearest()/geoWithinBBox()/createGeoIndex()` | 4 | golden:geo.txt (RADIUS/NEAREST/BBOX/IDX_GEO) |
+| `Collection->link()/linkWeighted()/unlink()/neighbors()/inNeighbors()/neighborsWeighted()/traverse()` | 7 | golden:graph.txt |
+| `Collection->createScalarIndex()/createCompoundIndex(...)/createTextIndex()/createTextIndexOnDisk()/createGeoIndex()/createVectorIndex* (6 variants)` | 10 | golden:schema.txt:IDX_* |
+| `Corvid\FieldDef::TYPE_* constants (0..8, frozen ABI values)` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA |
+| `Collection->setSchema()/schema() + Corvid\FieldDef { name, type, required, unique }` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA/SCHEMA_ERR |
+| `Collection->insertWithTtl()/setTtl()/getTtl()/purgeExpired()` | 4 | golden:mutations.txt (INSERT_TTL/SET_TTL/GET_TTL/PURGE) |
+| `Db->dump()/load()/loadWithRenames()` | 3 | golden:admin.txt (DUMP/LOAD/LOAD_RENAMES) |
+
+152 engine constructs are deliberately not exposed (each with its reason in the repo's `docs/SURFACE.tsv`).
+
+<!-- corvid-api-glance END -->
+
+## API reference
+
+The extension's userland API (classes, methods, signatures) is documented in the [repo's README](https://github.com/corvid-db/corvid-php) with the FPM/lifetime caveats in docs/PLAN.md.
+
 
 ## The correctness floor
 
@@ -7149,9 +9650,286 @@ with Db.open_memory() as db:
 ```
 
 <!-- corvid-examples:hybrid END -->
+### Vector indexes (ANN vs exact)
+
+<!-- corvid-examples:vector_index BEGIN -->
+
+```python
+import os
+import tempfile
+from array import array
+
+from corvid import Db
+
+CORPUS = [
+    ("k0", [1.0, 0.0, 0.0, 0.0]),  # nearest
+    ("k1", [0.95, 0.05, 0.0, 0.0]),
+    ("k2", [0.0, 1.0, 0.0, 0.0]),
+    ("k3", [0.0, 0.9, 0.1, 0.0]),
+    ("k4", [0.0, 0.0, 1.0, 0.0]),
+    ("k5", [0.7, 0.7, 0.0, 0.0]),
+    ("k6", [0.0, 0.0, 0.0, 1.0]),
+    ("k7", [0.98, 0.02, 0.0, 0.0]),
+]
+PROBE = array("f", [1.0, 0.0, 0.0, 0.0])
+
+
+def run_query(items, field_name, approx, label):
+    q = items.query().vector(field_name, PROBE, 4, "cosine")
+    if approx:
+        q = q.approx()
+    rows = q.run()
+    hits = " ".join(f"{r.key}({r.score:.6f})" for r in rows)
+    print(f"{label:<38} {hits}")
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    path = os.path.join(tmp, "vectors.redb")
+
+    with Db.open(path) as db:
+        items = db.collection("items")
+        for key, v in CORPUS:
+            vec = array("f", v)
+            items.insert(key, {"v_mem": vec, "v_disk": vec, "v_q": vec})
+        items.create_vector_index("v_mem", "cosine")
+        items.create_vector_index_ondisk("v_disk", "cosine")
+        items.create_vector_index_quantized("v_q", "cosine", "binary")
+
+        print("top-4 nearest to (1,0,0,0) under cosine:")
+        run_query(items, "v_mem", False, "exact (scan):")
+        run_query(items, "v_mem", True, "ann in-memory HNSW:")
+        run_query(items, "v_disk", True, "ann on-disk HNSW:")
+        run_query(items, "v_q", True, "ann binary-quantized:")
+        print("(the quantized lane trades recall for a ~32x smaller index)")
+        items.close()
+
+    # Reopen: the on-disk graph reloads (no rebuild) and answers again.
+    with Db.open(path) as db:
+        items = db.collection("items")
+        run_query(items, "v_disk", True, "ann on-disk after reopen:")
+        items.close()
+```
+
+<!-- corvid-examples:vector_index END -->
+### Text search (BM25, CJK, phrases)
+
+<!-- corvid-examples:text_search BEGIN -->
+
+```python
+from corvid import Db
+
+CORPUS = [
+    ("n1", "the quick brown fox jumps over the lazy dog"),
+    ("n2", "a quick red fox leaps over a sleeping dog"),
+    ("n3", "slow green turtle crosses the road"),
+    ("n4", "东京是一座巨大的城市"),   # Tokyo is a huge city
+    ("n5", "大阪是关西最大的城市"),   # Osaka is Kansai's biggest city
+    ("n6", "机器学习正在改变数据库"),  # ML is changing databases
+]
+
+with Db.open_memory() as db:
+    notes = db.collection("notes")
+    for key, body in CORPUS:
+        notes.insert(key, {"body": body})
+    notes.create_text_index("body")
+
+    def search(query, label):
+        rows = notes.query().text("body", query, 3).run()
+        hits = " ".join(f"{r.key}({r.score:.6f})" for r in rows)
+        print(f"{label:<28} -> {hits}")
+
+    def phrase(query, label):
+        rows = notes.phrase_search("body", query, 3)
+        hits = " ".join(f"{r.key}({r.score:.6f})" for r in rows)
+        print(f"{label:<28} -> {hits}")
+
+    search("quick fox", 'bm25 "quick fox":')
+    search("quick dog", 'bm25 "quick dog":')
+    search("城市", "bm25 CJK 城市 (city):")
+    search("数据库", "bm25 CJK 数据库 (database):")
+
+    phrase("fox jumps over", 'phrase "fox jumps over":')
+    phrase("over jumps fox", "phrase reversed (no match):")
+    phrase("leaps over a sleeping", "phrase stop words collapsed:")
+
+    notes.close()
+```
+
+<!-- corvid-examples:text_search END -->
+### Graph (neighbors, traverse, delete cascade)
+
+<!-- corvid-examples:graph BEGIN -->
+
+```python
+from corvid import Db
+
+with Db.open_memory() as db:
+    nodes = db.collection("nodes")
+    for key in ("ga", "gb", "gc"):
+        nodes.insert(key, {"n": key})
+
+    nodes.link("ga", "parent_of", "gb")
+    nodes.link("ga", "parent_of", "gc")
+    nodes.link("gb", "parent_of", "gd")  # gd never exists as a document
+    nodes.link_weighted("ga", "route", "gb", 2.5)
+    nodes.link_weighted("ga", "route", "gd", 0.75)
+
+    def show(label, keys):
+        print(f"{label:<36} [{' '.join(keys)}]")
+
+    show("neighbors(ga)", nodes.neighbors("ga", "parent_of"))
+    show("in_neighbors(gb)", nodes.in_neighbors("gb", "parent_of"))
+    routes = " ".join(f"{k}={w:.2f}" for k, w in nodes.neighbors_weighted("ga", "route"))
+    print(f"{'routes from ga (weighted):':<36} [{routes}]")
+    show("traverse(ga, 1 hop)", nodes.traverse("ga", "parent_of", 1))
+    show("traverse(ga, 2 hops)", nodes.traverse("ga", "parent_of", 2))
+
+    # Delete cascade: remove gc (a document) and gd (never a document).
+    print("delete gc: existed=", nodes.delete("gc"))
+    print("delete gd: existed=", nodes.delete("gd"),
+          "(never a document; its edges still cascade)")
+
+    show("neighbors(ga) after deletes", nodes.neighbors("ga", "parent_of"))
+    show("neighbors(gb) after deletes", nodes.neighbors("gb", "parent_of"))
+    show("traverse(ga, 2 hops) after", nodes.traverse("ga", "parent_of", 2))
+
+    nodes.close()
+```
+
+<!-- corvid-examples:graph END -->
+### Geo (radius, bbox, nearest)
+
+<!-- corvid-examples:geo BEGIN -->
+
+```python
+from corvid import Db
+
+CITIES = [
+    ("berlin", 52.52, 13.40),
+    ("potsdam", 52.40, 13.06),
+    ("hamburg", 53.55, 9.99),
+    ("munchen", 48.14, 11.58),
+]
+
+with Db.open_memory() as db:
+    places = db.collection("places")
+    for name, lat, lon in CITIES:
+        places.insert(name, {"name": name, "loc": [lat, lon]})
+    places.create_geo_index("loc")
+
+    def show(label, hits):
+        inside = " ".join(f"{h.key} {h.distance_km:.6f}km" for h in hits)
+        print(f"{label:<34} [{inside}]")
+
+    show("within 600km of Berlin:",
+         places.geo_within_radius("loc", 52.52, 13.40, 600.0))
+    show("bbox 47..55N, 5..15E:",
+         places.geo_within_bbox("loc", 47, 5, 55, 15))
+    show("nearest 2 to Berlin:",
+         places.geo_nearest("loc", 52.52, 13.40, 2))
+
+    places.close()
+```
+
+<!-- corvid-examples:geo END -->
+
+
+
+
 
 The fused scores are RRF rank sums: `s1` is rank 1 of both sources
 (1/61 + 1/61 = 2/61 ≈ 0.032787), `s3` rank 2 of both (2/62 ≈ 0.032258).
+
+## API at a glance
+
+Generated from the binding's `docs/SURFACE.tsv` (every engine
+construct at the pinned tag mapped or N/A with a reason) — regenerated
+by the docs sync, so it cannot drift.
+
+<!-- corvid-api-glance BEGIN -->
+
+| API group | engine constructs | proven by |
+|---|---|---|
+| `the Python value mapping (None/bool/int/float/str/bytes/array('f')/list/dict)` | 10 | golden:values.txt:VTYPE |
+| `FieldRef eq/ne/lt/le/gt/ge` | 7 | golden:queries.txt:QF_* |
+| `Predicate via field()/and_()/or_()/not_()` | 27 | golden:queries.txt:QF_* + golden:mutations.txt:DELETE_IN; golden:geo.txt:26 QF_GEO (the geo-predicate fixture line); tests/test_value_mapping.py::test_lt_predicate_executes (no fixture line dispatches lt; QF_AND uses ge/le) |
+| `Metric type ('cosine' | 'dot' | 'l2')` | 4 | golden:queries.txt:QVEC; golden:queries.txt:QVEC (query) + tests/test_value_mapping.py::test_vector_query_per_metric; golden:schema.txt:31 IDX_VEC_Q (index creation) + tests/test_value_mapping.py::test_vector_query_per_metric (query; QVEC never runs dot); golden:schema.txt:32 IDX_VEC_DISK (index creation) + tests/test_value_mapping.py::test_vector_query_per_metric (query; QVEC never runs l2) |
+| `Quantization type ('none' | 'binary' | 'scalar')` | 4 | golden:schema.txt:IDX_VEC_Q |
+| `raises CorvidError` | 1 | golden:mutations.txt:INSERT_ERR |
+| `CorvidError.code (ErrorCode table)` | 1 | test_error_code_table |
+| `ErrorCode.DATABASE (code 1)` | 1 | test_error_code_table |
+| `ErrorCode.TRANSACTION (code 2)` | 1 | test_error_code_table |
+| `ErrorCode.TABLE (code 3)` | 1 | test_error_code_table |
+| `ErrorCode.STORAGE (code 4)` | 1 | test_error_code_table |
+| `ErrorCode.COMMIT (code 5)` | 1 | test_error_code_table |
+| `ErrorCode.SET_DURABILITY (code 6)` | 1 | test_error_code_table |
+| `ErrorCode.COMPACTION (code 7)` | 1 | test_error_code_table |
+| `ErrorCode.DECODE (code 8)` | 1 | test_error_code_table |
+| `ErrorCode.CORRUPT_INDEX (code 9)` | 1 | test_error_code_table |
+| `ErrorCode.RESERVED_COLLECTION (code 10)` | 1 | test_error_code_table; golden:mutations.txt:INSERT_ERR(err:10) |
+| `ErrorCode.INVALID_NAME (code 11)` | 1 | test_error_code_table; golden:mutations.txt:INSERT_ERR(err:11) |
+| `ErrorCode.INVALID_ARGUMENT (code 12)` | 1 | test_error_code_table; golden:mutations.txt:UPDATE_ABORT(err:12) |
+| `ErrorCode.INCOMPATIBLE_FORMAT (code 13)` | 1 | test_error_code_table |
+| `ErrorCode.EMPTY_INDEX_TRAINING (code 14)` | 1 | test_error_code_table; golden:schema.txt:IDX_PQ_ERR(err:14) |
+| `ErrorCode.SCHEMA_VIOLATION (code 15)` | 1 | test_error_code_table; golden:schema.txt:SCHEMA_ERR(err:15) |
+| `ErrorCode.INVALID_DUMP (code 16)` | 1 | test_error_code_table |
+| `ErrorCode.BACKUP_TARGET_EXISTS (code 17)` | 1 | test_error_code_table; golden:admin.txt:BACKUP_DUP(err:17) |
+| `ErrorCode.IO (code 18)` | 1 | test_error_code_table |
+| `Row { key, score, document }` | 1 | golden:queries.txt |
+| `Query (Collection.query())` | 2 | golden:queries.txt |
+| `Query.filter` | 1 | golden:queries.txt:QF_COUNT |
+| `Query.vector` | 1 | golden:queries.txt:QVEC |
+| `Query.text` | 1 | golden:queries.txt:QTEXT |
+| `Query.fuse_rrf` | 1 | golden:queries.txt:HYBRID_F |
+| `Query.rerank_mmr` | 1 | golden:queries.txt:HYBRID |
+| `Query.limit` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.offset` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.order_by` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.approx` | 1 | golden:queries.txt:APPROX |
+| `Query.select` | 1 | golden:queries.txt:SELECT |
+| `Query.count` | 1 | golden:queries.txt:AGG_COUNT |
+| `Query.group_count` | 1 | golden:queries.txt:AGG_GCOUNT |
+| `Query.sum` | 1 | golden:queries.txt:AGG_SUM |
+| `Query.avg` | 1 | golden:queries.txt:AGG_AVG |
+| `Query.min` | 1 | golden:queries.txt:AGG_MIN |
+| `Query.max` | 1 | golden:queries.txt:AGG_MAX |
+| `Query.count_distinct` | 1 | golden:queries.txt:AGG_DISTINCT |
+| `Query.group_sum` | 1 | golden:queries.txt:AGG_GSUM |
+| `Query.group_avg` | 1 | golden:queries.txt:AGG_GAVG |
+| `Query.run` | 1 | golden:queries.txt:QVEC |
+| `Db` | 1 | golden:admin.txt:FILEDB |
+| `Db.open/open_memory/collection/collections/backup/compact` | 6 | golden:admin.txt (COLLECTIONS/BACKUP/COMPACT) |
+| `Collection` | 1 | golden:mutations.txt:COLL |
+| `Collection.insert/update/patch/compare_and_set` | 4 | golden:mutations.txt (INSERT/UPDATE/PATCH/CAS) |
+| `Collection.scan_each` | 1 | golden:mutations.txt:SCAN/SCAN_STOP |
+| `Collection.__len__ / Collection.is_empty` | 2 | golden:mutations.txt:LEN |
+| `Collection.insert_many` | 1 | golden:mutations.txt:PUTMANY + golden:schema.txt:PUTMANY_ROLLBACK |
+| `Collection.insert_auto` | 1 | golden:mutations.txt:INSERT_AUTO |
+| `Collection.get` | 1 | golden:mutations.txt:GET |
+| `Collection.delete/delete_where/delete_batch` | 3 | golden:mutations.txt (DELETE/DELETE_WHERE/DELETE_BATCH) |
+| `Collection.scan` | 1 | golden:mutations.txt:SCAN |
+| `Collection.page / Page` | 2 | golden:mutations.txt:PAGE |
+| `Row.score (Query.vector().run())` | 1 | golden:queries.txt:QVEC |
+| `Row.score (Query.text().run())` | 1 | golden:queries.txt:QTEXT |
+| `Collection.phrase_search(field, phrase, k) — the direct positional search over the engine method` | 1 | golden:queries.txt:PHRASE |
+| `Query.fuse_rrf default k=60` | 1 | golden:queries.txt:HYBRID |
+| `GeoHit { key, distance_km, document }` | 1 | golden:geo.txt:RADIUS/NEAREST/BBOX |
+| `Collection.geo_within_radius/geo_nearest/geo_within_bbox/create_geo_index` | 4 | golden:geo.txt (RADIUS/NEAREST/BBOX/IDX_GEO) |
+| `Collection.link/link_weighted/unlink/neighbors/in_neighbors/neighbors_weighted/traverse` | 7 | golden:graph.txt |
+| `Collection.create_scalar_index/create_compound_index/create_text_index[/ondisk]/create_geo_index/create_vector_index* (6 variants)` | 10 | golden:schema.txt:IDX_* |
+| `FieldType Literal ('any'|'bool'|'int'|'float'|'text'|'bytes'|'vector'|'array'|'map')` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA |
+| `Collection.set_schema/schema + SchemaField(name, ty, required, unique)` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA/SCHEMA_ERR |
+| `Collection.insert_with_ttl/set_ttl/get_ttl/purge_expired` | 4 | golden:mutations.txt (INSERT_TTL/SET_TTL/GET_TTL/PURGE) |
+| `Db.dump_to_path/load_from_path/load_from_path_with_renames` | 3 | golden:admin.txt (DUMP/LOAD/LOAD_RENAMES) |
+
+159 engine constructs are deliberately not exposed (each with its reason in the repo's `docs/SURFACE.tsv`).
+
+<!-- corvid-api-glance END -->
+
+## API reference
+
+Docstrings ship in the wheel: [pypi.org/project/corvid-python](https://pypi.org/project/corvid-python/) — `help(corvid)` renders the same, offline.
+
 
 ## Value mapping
 
@@ -7270,6 +10048,344 @@ that a bare `[1.0, 0.0]` inside a document literal infers `[Double]`
 and encodes as an *array*; vectors are `[Float]`, so write
 `[1.0, 0.0] as [Float]`. Keys are `Data`. NaNs cross bit-exact both
 ways.
+
+## The examples
+
+Six runnable programs as executable targets in the package
+(`swift run <Name>`), executed on every CI leg with deterministic
+output: **quickstart**, **hybrid** (the flagship), **vector-index**
+(in-memory / on-disk / binary-quantized HNSW vs the exact scan),
+**text-search** (BM25 incl. CJK bigram segmentation, plus the direct
+phrase search), **graph** (neighbors/traverse + delete cascade), and
+**geo** (radius / bbox / nearest). All six sources are embedded below —
+imported from the repo so they cannot drift from what CI executes
+(`scripts/sync-binding-examples.sh`; the drift gate reddens docs CI if
+they diverge).
+
+### Quickstart
+
+<!-- corvid-examples:quickstart BEGIN -->
+
+```swift
+let db = try Corvid.openMemory()
+defer { db.close() }
+
+let docs = try db.collection("docs")
+
+try docs.insert(
+    Data("p1".utf8),
+    ["title": "rust embedded database", "kind": "doc",
+     "v": [1.0, 0.0] as [Float]] as [String: Any?])
+try docs.insert(
+    Data("p2".utf8),
+    ["title": "python web frameworks", "kind": "doc",
+     "v": [0.0, 1.0] as [Float]] as [String: Any?])
+try docs.insert(
+    Data("p3".utf8),
+    ["title": "rust again database", "kind": "doc",
+     "v": [0.9, 0.1] as [Float]] as [String: Any?])
+
+// kNN: the 3 nearest documents to (1, 0) under cosine. Project the
+// field the printout needs (docs decode in full either way; select
+// trims the payload). render flattens the Any?-boxed values Swift's
+// dictionary printing would show as Optional(...).
+func render(_ doc: Any?) -> String {
+    guard let d = doc as? [String: Any?] else { return String(describing: doc ?? "nil") }
+    return "[" + d.sorted { $0.key < <!-- corvid-examples:quickstart BEGIN -->.key }
+        .map { "\($0.key): \($0.value.map { String(describing: $0) } ?? "nil")" }
+        .joined(separator: ", ") + "]"
+}
+
+let rows = Array(try docs.query()
+    .vector("v", [1.0, 0.0], k: 3, metric: .cosine)
+    .select(["title"])
+    .run())
+for (rank, r) in rows.enumerated() {
+    print(String(format: "%d. %@ score=%.6f %@",
+                 rank + 1, String(decoding: r.key, as: UTF8.self), r.score, render(r.doc)))
+}
+```
+
+<!-- corvid-examples:quickstart END -->
+
+### Hybrid retrieval
+
+<!-- corvid-examples:hybrid BEGIN -->
+
+```swift
+let db = try Corvid.openMemory()
+defer { db.close() }
+
+let docs = try db.collection("docs")
+
+try docs.insert(
+    Data("s1".utf8),
+    ["kind": "doc", "body": "rust embedded database",
+     "v": [1.0, 0.0] as [Float]] as [String: Any?])
+try docs.insert(
+    Data("s2".utf8),
+    ["kind": "doc", "body": "python web frameworks",
+     "v": [0.0, 1.0] as [Float]] as [String: Any?])
+try docs.insert(
+    Data("s3".utf8),
+    ["kind": "doc", "body": "rust again database",
+     "v": [0.9, 0.1] as [Float]] as [String: Any?])
+try docs.insert(Data("m1".utf8), ["kind": "meta"]) // filtered out below
+
+// The flagship query: filter + vector + text, RRF + MMR + limit.
+// render flattens the Any?-boxed values Swift's dictionary printing
+// would show as Optional(...).
+func render(_ doc: Any?) -> String {
+    guard let d = doc as? [String: Any?] else { return String(describing: doc ?? "nil") }
+    return "[" + d.sorted { $0.key < <!-- corvid-examples:hybrid BEGIN -->.key }
+        .map { "\($0.key): \($0.value.map { String(describing: $0) } ?? "nil")" }
+        .joined(separator: ", ") + "]"
+}
+
+let rows = Array(try docs.query()
+    .filter(try field("kind").eq("doc"))
+    .vector("v", [1.0, 0.0], k: 2, metric: .cosine)
+    .text("body", "rust database", k: 2)
+    .fuseRRF(k: 60)
+    .rerankMMR(lambda: 1)
+    .limit(n: 2)
+    .select(["body"])
+    .run())
+for (rank, r) in rows.enumerated() {
+    print(String(format: "%d. %@ score=%.6f %@",
+                 rank + 1, String(decoding: r.key, as: UTF8.self), r.score, render(r.doc)))
+}
+```
+
+<!-- corvid-examples:hybrid END -->
+
+### Vector indexes (ANN vs exact)
+
+<!-- corvid-examples:vector_index BEGIN -->
+
+```swift
+let path = NSTemporaryDirectory() + "corvid-swift-example-vector-index.redb"
+try? FileManager.default.removeItem(atPath: path) // reruns start clean (single-file db)
+
+do {
+    let db = try Corvid.open(path)
+    defer { db.close() }
+    let items = try db.collection("items")
+    for (key, v) in corpus {
+        try items.insert(Data("\(key)".utf8),
+                         ["v_mem": v, "v_disk": v, "v_q": v] as [String: Any?])
+    }
+    try items.createVectorIndex("v_mem", metric: .cosine)
+    try items.createVectorIndexOnDisk("v_disk", metric: .cosine)
+    try items.createVectorIndexQuantized("v_q", metric: .cosine, quant: .binary)
+
+    print("top-4 nearest to (1,0,0,0) under cosine:")
+    try runQuery(items, "v_mem", approx: false, "exact (scan):")
+    try runQuery(items, "v_mem", approx: true, "ann in-memory HNSW:")
+    try runQuery(items, "v_disk", approx: true, "ann on-disk HNSW:")
+    try runQuery(items, "v_q", approx: true, "ann binary-quantized:")
+    print("(the quantized lane trades recall for a ~32x smaller index)")
+}
+
+// Reopen: the on-disk graph reloads (no rebuild) and answers again.
+do {
+    let db = try Corvid.open(path)
+    defer { db.close() }
+    let items = try db.collection("items")
+    try runQuery(items, "v_disk", approx: true, "ann on-disk after reopen:")
+}
+
+try? FileManager.default.removeItem(atPath: path)
+```
+
+<!-- corvid-examples:vector_index END -->
+
+### Text search (BM25, CJK, phrases)
+
+<!-- corvid-examples:text_search BEGIN -->
+
+```swift
+let db = try Corvid.openMemory()
+defer { db.close() }
+
+let notes = try db.collection("notes")
+
+for (key, body) in corpus {
+    try notes.insert(Data(key.utf8), ["body": body] as [String: Any?])
+}
+try notes.createTextIndex("body")
+
+try search(notes, "quick fox", "bm25 \"quick fox\":")
+try search(notes, "quick dog", "bm25 \"quick dog\":")
+try search(notes, "城市", "bm25 CJK 城市 (city):")
+try search(notes, "数据库", "bm25 CJK 数据库 (database):")
+
+try phrase(notes, "fox jumps over", "phrase \"fox jumps over\":")
+try phrase(notes, "over jumps fox", "phrase \"over jumps fox\" (reversed — no match):")
+try phrase(notes, "leaps over a sleeping", "phrase with stop words collapsed:")
+```
+
+<!-- corvid-examples:text_search END -->
+
+### Graph (neighbors, traverse, delete cascade)
+
+<!-- corvid-examples:graph BEGIN -->
+
+```swift
+let db = try Corvid.openMemory()
+defer { db.close() }
+
+let nodes = try db.collection("nodes")
+
+for key in ["ga", "gb", "gc"] {
+    try nodes.insert(Data(key.utf8), ["n": key] as [String: Any?])
+}
+
+try nodes.link(Data("ga".utf8), "parent_of", Data("gb".utf8))
+try nodes.link(Data("ga".utf8), "parent_of", Data("gc".utf8))
+try nodes.link(Data("gb".utf8), "parent_of", Data("gd".utf8)) // gd never a document
+try nodes.linkWeighted(Data("ga".utf8), "route", Data("gb".utf8), weight: 2.5)
+try nodes.linkWeighted(Data("ga".utf8), "route", Data("gd".utf8), weight: 0.75)
+
+let ga = Data("ga".utf8)
+let gb = Data("gb".utf8)
+
+show("neighbors(ga)", Array(try nodes.neighbors(ga, "parent_of")))
+show("in_neighbors(gb)", Array(try nodes.inNeighbors(gb, "parent_of")))
+let routes = try nodes.neighborsWeighted(ga, "route")
+    .map { String(format: "%@=%0.2f", String(decoding: $0.key, as: UTF8.self), $0.weight) }
+    .joined(separator: " ")
+print("\(pad("routes from ga (weighted):", 36)) [\(routes)]")
+show("traverse(ga, 1 hop)", Array(try nodes.traverse(ga, "parent_of", hops: 1)))
+show("traverse(ga, 2 hops)", Array(try nodes.traverse(ga, "parent_of", hops: 2)))
+
+// Delete cascade: remove gc (a document) and gd (never a document).
+print("delete gc: existed = \(try nodes.delete(Data("gc".utf8)))")
+let existedGd = try nodes.delete(Data("gd".utf8))
+print("delete gd: existed = \(existedGd) (never a document; its edges still cascade)")
+
+show("neighbors(ga) after deletes", Array(try nodes.neighbors(ga, "parent_of")))
+show("neighbors(gb) after deletes", Array(try nodes.neighbors(gb, "parent_of")))
+show("traverse(ga, 2 hops) after", Array(try nodes.traverse(ga, "parent_of", hops: 2)))
+```
+
+<!-- corvid-examples:graph END -->
+
+### Geo (radius, bbox, nearest)
+
+<!-- corvid-examples:geo BEGIN -->
+
+```swift
+let db = try Corvid.openMemory()
+defer { db.close() }
+
+let places = try db.collection("places")
+
+for (name, lat, lon) in cities {
+    try places.insert(Data(name.utf8), [
+        "name": name,
+        "loc": [lat, lon] as [Any?], // the [lat, lon] array encoding
+    ] as [String: Any?])
+}
+try places.createGeoIndex("loc")
+
+show("within 600km of Berlin:", Array(try places.geoWithinRadius("loc", lat: 52.52, lon: 13.40, radiusKm: 600.0)))
+show("bbox 47..55N, 5..15E:", Array(try places.geoWithinBBox("loc", minLat: 47.0, minLon: 5.0, maxLat: 55.0, maxLon: 15.0)))
+show("nearest 2 to Berlin:", Array(try places.geoNearest("loc", lat: 52.52, lon: 13.40, k: 2)))
+```
+
+<!-- corvid-examples:geo END -->
+
+## API at a glance
+
+Generated from the binding's `docs/SURFACE.tsv` (every engine
+construct at the pinned tag mapped or N/A with a reason) — regenerated
+by the docs sync, so it cannot drift.
+
+<!-- corvid-api-glance BEGIN -->
+
+| API group | engine constructs | proven by |
+|---|---|---|
+| `the Swift value mapping (nil/Bool/Int/Double/String/Data/[Float]/[Any?]/[String: Any?])` | 10 | golden:values.txt:VTYPE |
+| `FieldExpr.eq/ne/lt/le/gt/ge` | 7 | golden:queries.txt:QF_* |
+| `Predicate via field()/Predicate.not()` | 27 | golden:queries.txt:QF_* + golden:mutations.txt:DELETE_IN |
+| `Metric enum (Metric.cosine/dot/l2)` | 4 | golden:queries.txt:QVEC |
+| `Quant enum (Quant.none/binary/scalar)` | 4 | golden:schema.txt:IDX_VEC_Q |
+| `throws CorvidError` | 1 | golden:mutations.txt:INSERT_ERR |
+| `CorvidError.code (CorvidErrorCode table)` | 1 | ErrCodesTest.swift errorCodeTableIsFrozen |
+| `CorvidErrorCode.database (code 1)` | 1 | ErrCodesTest.swift errorCodeTableIsFrozen |
+| `CorvidErrorCode.transaction (code 2)` | 1 | ErrCodesTest.swift errorCodeTableIsFrozen |
+| `CorvidErrorCode.table (code 3)` | 1 | ErrCodesTest.swift errorCodeTableIsFrozen |
+| `CorvidErrorCode.storage (code 4)` | 1 | ErrCodesTest.swift errorCodeTableIsFrozen |
+| `CorvidErrorCode.commit (code 5)` | 1 | ErrCodesTest.swift errorCodeTableIsFrozen |
+| `CorvidErrorCode.setDurability (code 6)` | 1 | ErrCodesTest.swift errorCodeTableIsFrozen |
+| `CorvidErrorCode.compaction (code 7)` | 1 | ErrCodesTest.swift errorCodeTableIsFrozen |
+| `CorvidErrorCode.decode (code 8)` | 1 | ErrCodesTest.swift errorCodeTableIsFrozen |
+| `CorvidErrorCode.corruptIndex (code 9)` | 1 | ErrCodesTest.swift errorCodeTableIsFrozen |
+| `CorvidErrorCode.reservedCollection (code 10)` | 1 | ErrCodesTest.swift errorCodeTableIsFrozen; golden:mutations.txt:INSERT_ERR(err:10) |
+| `CorvidErrorCode.invalidName (code 11)` | 1 | ErrCodesTest.swift errorCodeTableIsFrozen; golden:mutations.txt:INSERT_ERR(err:11) |
+| `CorvidErrorCode.argument (code 12)` | 1 | ErrCodesTest.swift errorCodeTableIsFrozen; golden:mutations.txt:UPDATE_ABORT(err:12) |
+| `CorvidErrorCode.incompatibleFormat (code 13)` | 1 | ErrCodesTest.swift errorCodeTableIsFrozen |
+| `CorvidErrorCode.emptyIndexTraining (code 14)` | 1 | ErrCodesTest.swift errorCodeTableIsFrozen; golden:schema.txt:IDX_PQ_ERR(err:14) |
+| `CorvidErrorCode.schemaViolation (code 15)` | 1 | ErrCodesTest.swift errorCodeTableIsFrozen; golden:schema.txt:SCHEMA_ERR(err:15) |
+| `CorvidErrorCode.invalidDump (code 16)` | 1 | ErrCodesTest.swift errorCodeTableIsFrozen |
+| `CorvidErrorCode.backupTargetExists (code 17)` | 1 | ErrCodesTest.swift errorCodeTableIsFrozen; golden:admin.txt:BACKUP_DUP(err:17) |
+| `CorvidErrorCode.io (code 18)` | 1 | ErrCodesTest.swift errorCodeTableIsFrozen |
+| `Row { key, doc, score }` | 1 | golden:queries.txt |
+| `Query (Collection.query())` | 2 | golden:queries.txt |
+| `Query.filter` | 1 | golden:queries.txt:QF_COUNT |
+| `Query.vector` | 1 | golden:queries.txt:QVEC |
+| `Query.text` | 1 | golden:queries.txt:QTEXT |
+| `Query.fuseRRF` | 1 | golden:queries.txt:HYBRID_F |
+| `Query.rerankMMR` | 1 | golden:queries.txt:HYBRID |
+| `Query.limit` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.offset` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.orderBy` | 1 | golden:queries.txt:ORDER_BY |
+| `Query.approx` | 1 | golden:queries.txt:APPROX |
+| `Query.select` | 1 | golden:queries.txt:SELECT |
+| `Query.count` | 1 | golden:queries.txt:AGG_COUNT |
+| `Query.groupCount` | 1 | golden:queries.txt:AGG_GCOUNT |
+| `Query.sum` | 1 | golden:queries.txt:AGG_SUM |
+| `Query.avg` | 1 | golden:queries.txt:AGG_AVG |
+| `Query.min` | 1 | golden:queries.txt:AGG_MIN |
+| `Query.max` | 1 | golden:queries.txt:AGG_MAX |
+| `Query.countDistinct` | 1 | golden:queries.txt:AGG_DISTINCT |
+| `Query.groupSum` | 1 | golden:queries.txt:AGG_GSUM |
+| `Query.groupAvg` | 1 | golden:queries.txt:AGG_GAVG |
+| `Query.run` | 1 | golden:queries.txt:QVEC |
+| `Db` | 1 | golden:admin.txt:FILEDB |
+| `Corvid.open/openMemory + Db.collection/collections/backup/compact` | 6 | golden:admin.txt (COLLECTIONS/BACKUP/COMPACT) |
+| `Collection` | 1 | golden:mutations.txt:COLL |
+| `Collection.insert/update/patch/compareAndSet` | 4 | golden:mutations.txt (INSERT/UPDATE/PATCH/CAS) |
+| `Collection.scan(callback, early stop)` | 1 | golden:mutations.txt:SCAN/SCAN_STOP |
+| `Collection.len (len()==0 for empty)` | 2 | golden:mutations.txt:LEN |
+| `Collection.putMany` | 1 | golden:mutations.txt:PUTMANY + golden:schema.txt:PUTMANY_ROLLBACK |
+| `Collection.insertAuto` | 1 | golden:mutations.txt:INSERT_AUTO |
+| `Collection.get` | 1 | golden:mutations.txt:GET |
+| `Collection.delete/deleteWhere/deleteBatch` | 3 | golden:mutations.txt (DELETE/DELETE_WHERE/DELETE_BATCH) |
+| `Collection.scan` | 1 | golden:mutations.txt:SCAN |
+| `Collection.page -> Page(rows, nextAfter)` | 2 | golden:mutations.txt:PAGE |
+| `Row.score (Query.vector().run())` | 1 | golden:queries.txt:QVEC |
+| `Row.score (Query.text().run())` | 1 | golden:queries.txt:QTEXT |
+| `Collection.phraseSearch(field:phrase:k:) — the direct positional search (corvid_phrase_search, v0.3.0) over the rows cursor` | 1 | golden:queries.txt:PHRASE |
+| `Query.fuseRRF default k=60` | 1 | golden:queries.txt:HYBRID |
+| `GeoHit { key, doc, distanceKm }` | 1 | golden:geo.txt:RADIUS/NEAREST/BBOX |
+| `Collection.geoWithinRadius/geoNearest/geoWithinBBox/createGeoIndex` | 4 | golden:geo.txt (RADIUS/NEAREST/BBOX/IDX_GEO) |
+| `Collection.link/linkWeighted/unlink/neighbors/inNeighbors/neighborsWeighted/traverse` | 7 | golden:graph.txt |
+| `Collection.createScalarIndex/createCompoundIndex/createTextIndex[/OnDisk]/createGeoIndex/createVectorIndex* (variants)` | 10 | golden:schema.txt:IDX_* |
+| `FieldType enum (FieldType.any/bool/int/float/text/bytes/vector/array/map)` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA |
+| `Collection.setSchema/schema + FieldDef(name:type:required:unique:)` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA/SCHEMA_ERR |
+| `Collection.insertWithTTL/setTTL/getTTL/purgeExpired` | 4 | golden:mutations.txt (INSERT_TTL/SET_TTL/GET_TTL/PURGE) |
+| `Db.dumpToPath/loadFromPath/loadFromPathWithRenames` | 3 | golden:admin.txt (DUMP/LOAD/LOAD_RENAMES) |
+
+159 engine constructs are deliberately not exposed (each with its reason in the repo's `docs/SURFACE.tsv`).
+
+<!-- corvid-api-glance END -->
+
+## API reference
+
+The [Swift Package Index](https://swiftpackageindex.com/corvid-db/corvid-swift) renders DocC-style reference from the wrapper's doc comments (also Quick Help in Xcode).
+
 
 ## The architecture ruling: SPM binary target, no shim
 
@@ -7511,6 +10627,456 @@ pub fn main(init: std.process.Init) u8 {
 ```
 
 <!-- corvid-examples:hybrid END -->
+### Vector indexes (ANN vs exact)
+
+<!-- corvid-examples:vector_index BEGIN -->
+
+```zig
+fn putDoc(items: corvid.Collection, key: []const u8, v: []const f32) !void {
+    var doc = corvid.Value.map();
+    defer doc.deinit();
+    var a = corvid.Value.vector(v);
+    try doc.put("v_mem", &a);
+    var b = corvid.Value.vector(v);
+    try doc.put("v_disk", &b);
+    var q = corvid.Value.vector(v);
+    try doc.put("v_q", &q);
+    try items.insert(key, doc);
+}
+
+// Run a top-4 vector query over `field`, print its ranked keys.
+fn runQuery(init: std.process.Init, items: corvid.Collection, field: []const u8, approx: bool, label: []const u8) u8 {
+    var q = items.query() catch |e| return fail(e, "query_new");
+    defer q.deinit();
+    _ = q.vector(field, &PROBE, 4, .cosine) catch |e| return fail(e, "query_vector");
+    if (approx) _ = q.approx() catch |e| return fail(e, "query_approx");
+    var rows = q.run() catch |e| return fail(e, "query_run");
+    defer rows.deinit();
+
+    var buf: [512]u8 = undefined;
+    var w = std.Io.File.stdout().writer(init.io, &buf);
+    w.interface.print("{s:<38}", .{label}) catch {};
+    while (rows.next()) |row| {
+        w.interface.print(" {s}({d:.6})", .{ row.key, @as(f64, row.score) }) catch {};
+    }
+    w.interface.print("\n", .{}) catch {};
+    w.interface.flush() catch {};
+    return 0;
+}
+
+pub fn main(init: std.process.Init) u8 {
+    var buf: [512]u8 = undefined;
+    var w = std.Io.File.stdout().writer(init.io, &buf);
+    const say = struct {
+        fn print(writer: *std.Io.File.Writer, comptime fmt: []const u8, args: anytype) void {
+            writer.interface.print(fmt, args) catch {};
+        }
+    }.print;
+
+    std.Io.Dir.cwd().deleteTree(init.io, DB_FILE) catch {};
+
+    var db = corvid.Db.open(DB_FILE) catch |e| return fail(e, "open");
+    var items = db.collection("items") catch |e| return fail(e, "collection");
+
+    for (DOCS, 0..) |v, i| {
+        var key_buf: [8]u8 = undefined;
+        const key = std.fmt.bufPrint(&key_buf, "i{d}", .{i}) catch unreachable;
+        putDoc(items, key, &v) catch |e| return fail(e, "insert");
+    }
+
+    items.createVectorIndex("v_mem", .cosine) catch |e| return fail(e, "index v_mem");
+    items.createVectorIndexOndisk("v_disk", .cosine) catch |e| return fail(e, "index v_disk");
+    items.createVectorIndexQuantized("v_q", .cosine, .binary) catch |e| return fail(e, "index v_q");
+
+    say(&w, "corpus: 8 docs, 4-d; probe (1,0,0,0), top-4 cosine\n", .{});
+    say(&w, "scores are RRF ranks of each lane's own ranking\n\n", .{});
+    w.interface.flush() catch {};
+
+    var rc = runQuery(init, items, "v_mem", false, "exact scan (no index):");
+    if (rc != 0) return rc;
+    rc = runQuery(init, items, "v_mem", true, "in-memory HNSW (approx):");
+    if (rc != 0) return rc;
+    rc = runQuery(init, items, "v_disk", true, "on-disk HNSW (approx):");
+    if (rc != 0) return rc;
+    rc = runQuery(init, items, "v_q", true, "binary-quantized (approx):");
+    if (rc != 0) return rc;
+
+    // Close and reopen: the on-disk graph reloads with the file and
+    // serves the same ANN answer without a rebuild.
+    items.deinit();
+    db.deinit();
+    say(&w, "\nclose + reopen (on-disk HNSW reloads):\n", .{});
+    w.interface.flush() catch {};
+
+    var db2 = corvid.Db.open(DB_FILE) catch |e| return fail(e, "reopen");
+    defer db2.deinit();
+    var items2 = db2.collection("items") catch |e| return fail(e, "collection 2");
+    defer items2.deinit();
+    return runQuery(init, items2, "v_disk", true, "on-disk HNSW (approx):");
+}
+```
+
+<!-- corvid-examples:vector_index END -->
+### Text search (BM25, CJK, phrases)
+
+<!-- corvid-examples:text_search BEGIN -->
+
+```zig
+fn putNote(notes: corvid.Collection, key: []const u8, body: []const u8) !void {
+    var doc = corvid.Value.map();
+    defer doc.deinit();
+    var b = try corvid.Value.text(body);
+    try doc.put("body", &b);
+    try notes.insert(key, doc);
+}
+
+fn searchBm25(init: std.process.Init, notes: corvid.Collection, query: []const u8, label: []const u8) u8 {
+    var q = notes.query() catch |e| return fail(e, "query_new");
+    defer q.deinit();
+    _ = q.text("body", query, 3) catch |e| return fail(e, "query_text");
+    var rows = q.run() catch |e| return fail(e, "query_run");
+    defer rows.deinit();
+
+    var buf: [512]u8 = undefined;
+    var w = std.Io.File.stdout().writer(init.io, &buf);
+    w.interface.print("{s:<34} ->", .{label}) catch {};
+    while (rows.next()) |row| {
+        w.interface.print(" {s}({d:.6})", .{ row.key, @as(f64, row.score) }) catch {};
+    }
+    w.interface.print("\n", .{}) catch {};
+    w.interface.flush() catch {};
+    return 0;
+}
+
+fn searchPhrase(init: std.process.Init, notes: corvid.Collection, phrase: []const u8, k: usize, label: []const u8) u8 {
+    var rows = notes.phraseSearch("body", phrase, k) catch |e| return fail(e, "phrase_search");
+    defer rows.deinit();
+
+    var buf: [512]u8 = undefined;
+    var w = std.Io.File.stdout().writer(init.io, &buf);
+    w.interface.print("{s:<34} ->", .{label}) catch {};
+    var any = false;
+    while (rows.next()) |row| {
+        any = true;
+        w.interface.print(" {s}({d:.6})", .{ row.key, @as(f64, row.score) }) catch {};
+    }
+    if (!any) w.interface.print(" (none)", .{}) catch {};
+    w.interface.print("\n", .{}) catch {};
+    w.interface.flush() catch {};
+    return 0;
+}
+
+pub fn main(init: std.process.Init) u8 {
+    var db = corvid.Db.openMemory() catch |e| return fail(e, "open");
+    defer db.deinit();
+    var notes = db.collection("notes") catch |e| return fail(e, "collection");
+    defer notes.deinit();
+
+    const corpus = [_]struct { key: []const u8, body: []const u8 }{
+        .{ .key = "n1", .body = "the quick brown fox jumps over the lazy dog" },
+        .{ .key = "n2", .body = "a quick red fox leaps over a sleeping dog" },
+        .{ .key = "n3", .body = "slow green turtle crosses the road" },
+        .{ .key = "n4", .body = "东京是一座巨大的城市" }, // Tokyo is a huge city
+        .{ .key = "n5", .body = "大阪是关西最大的城市" }, // Osaka is Kansai's biggest city
+        .{ .key = "n6", .body = "机器学习正在改变数据库" }, // ML is changing databases
+    };
+    for (corpus) |n| putNote(notes, n.key, n.body) catch |e| return fail(e, "insert");
+
+    notes.createTextIndex("body") catch |e| return fail(e, "create_text_index");
+
+    var rc: u8 = 0;
+    var buf: [512]u8 = undefined;
+    var w = std.Io.File.stdout().writer(init.io, &buf);
+    w.interface.print("== BM25 (query builder; RRF-rank scores) ==\n", .{}) catch {};
+    w.interface.flush() catch {};
+    rc = searchBm25(init, notes, "quick fox", "bm25 \"quick fox\":");
+    if (rc != 0) return rc;
+    rc = searchBm25(init, notes, "quick dog", "bm25 \"quick dog\":");
+    if (rc != 0) return rc;
+    rc = searchBm25(init, notes, "城市", "bm25 CJK 城市 (city):");
+    if (rc != 0) return rc;
+    rc = searchBm25(init, notes, "数据库", "bm25 CJK 数据库 (database):");
+    if (rc != 0) return rc;
+
+    w.interface.print("\n== phrase (direct positional; BM25 phrase-sum scores) ==\n", .{}) catch {};
+    w.interface.flush() catch {};
+    // Word order matters: reversed matches nothing.
+    rc = searchPhrase(init, notes, "quick brown fox", 3, "phrase \"quick brown fox\":");
+    if (rc != 0) return rc;
+    rc = searchPhrase(init, notes, "fox quick brown", 3, "phrase \"fox quick brown\":");
+    if (rc != 0) return rc;
+    // Stop words collapse out of adjacency: the ≡ nothing.
+    rc = searchPhrase(init, notes, "over the lazy", 3, "phrase \"over the lazy\":");
+    if (rc != 0) return rc;
+    rc = searchPhrase(init, notes, "over lazy", 3, "phrase \"over lazy\":");
+    if (rc != 0) return rc;
+    // CJK bigrams carry the phrase match through.
+    rc = searchPhrase(init, notes, "巨大的城市", 3, "phrase CJK 巨大的城市:");
+    if (rc != 0) return rc;
+    // k == 0: an EMPTY cursor — inert, not an error.
+    rc = searchPhrase(init, notes, "quick", 0, "phrase k=0:");
+    if (rc != 0) return rc;
+    return 0;
+}
+```
+
+<!-- corvid-examples:text_search END -->
+### Graph (neighbors, traverse, delete cascade)
+
+<!-- corvid-examples:graph BEGIN -->
+
+```zig
+fn putNode(nodes: corvid.Collection, key: []const u8) !void {
+    var doc = corvid.Value.map();
+    defer doc.deinit();
+    var n = try corvid.Value.text(key);
+    try doc.put("n", &n);
+    try nodes.insert(key, doc);
+}
+
+// Print one `[a b c ]` line from a key-set cursor (borrowed views).
+fn printStrs(init: std.process.Init, label: []const u8, s: *corvid.Strs) void {
+    var buf: [256]u8 = undefined;
+    var w = std.Io.File.stdout().writer(init.io, &buf);
+    w.interface.print("{s:<36} [", .{label}) catch {};
+    while (s.next()) |item| {
+        w.interface.print("{s} ", .{item}) catch {};
+    }
+    w.interface.print("]\n", .{}) catch {};
+    w.interface.flush() catch {};
+}
+
+pub fn main(init: std.process.Init) u8 {
+    var db = corvid.Db.openMemory() catch |e| return fail(e, "open");
+    defer db.deinit();
+    var nodes = db.collection("nodes") catch |e| return fail(e, "collection");
+    defer nodes.deinit();
+
+    for ([_][]const u8{ "ga", "gb", "gc" }) |key| {
+        putNode(nodes, key) catch |e| return fail(e, "insert");
+    }
+
+    nodes.link("ga", "parent_of", "gb") catch |e| return fail(e, "link ga->gb");
+    nodes.link("ga", "parent_of", "gc") catch |e| return fail(e, "link ga->gc");
+    // gb -> gd: gd never exists as a document; the edge dangles fine.
+    nodes.link("gb", "parent_of", "gd") catch |e| return fail(e, "link gb->gd");
+    nodes.linkWeighted("ga", "route", "gb", 2.5) catch |e| return fail(e, "link_weighted ga->gb");
+    nodes.linkWeighted("ga", "route", "gd", 0.75) catch |e| return fail(e, "link_weighted ga->gd");
+
+    var buf: [512]u8 = undefined;
+    var w = std.Io.File.stdout().writer(init.io, &buf);
+
+    var neighbors = nodes.neighbors("ga", "parent_of") catch |e| return fail(e, "neighbors");
+    defer neighbors.deinit();
+    printStrs(init, "neighbors(ga):", &neighbors);
+
+    var in = nodes.inNeighbors("gb", "parent_of") catch |e| return fail(e, "in_neighbors");
+    defer in.deinit();
+    printStrs(init, "in_neighbors(gb):", &in);
+
+    var routes = nodes.neighborsWeighted("ga", "route") catch |e| return fail(e, "neighbors_weighted");
+    defer routes.deinit();
+    w.interface.print("{s:<36} [", .{"routes from ga (weighted):"}) catch {};
+    while (routes.next()) |hit| {
+        w.interface.print("{s}={d:.2} ", .{ hit.key, hit.distance_km }) catch {};
+    }
+    w.interface.print("]\n", .{}) catch {};
+
+    var t1 = nodes.traverse("ga", "parent_of", 1) catch |e| return fail(e, "traverse 1");
+    defer t1.deinit();
+    printStrs(init, "traverse(ga, 1 hop):", &t1);
+    var t2 = nodes.traverse("ga", "parent_of", 2) catch |e| return fail(e, "traverse 2");
+    defer t2.deinit();
+    printStrs(init, "traverse(ga, 2 hops):", &t2);
+    w.interface.flush() catch {};
+
+    // Delete cascade: remove gc (a document) and gd (never a document).
+    const gc_gone = nodes.delete("gc") catch |e| return fail(e, "delete gc");
+    w.interface.print("delete gc: existed={}\n", .{gc_gone}) catch {};
+    const gd_gone = nodes.delete("gd") catch |e| return fail(e, "delete gd");
+    w.interface.print("delete gd: existed={} (never a document; its edges still cascade)\n", .{gd_gone}) catch {};
+    w.interface.flush() catch {};
+
+    var na = nodes.neighbors("ga", "parent_of") catch |e| return fail(e, "neighbors after");
+    defer na.deinit();
+    printStrs(init, "neighbors(ga) after deletes:", &na);
+    var nb = nodes.neighbors("gb", "parent_of") catch |e| return fail(e, "neighbors(gb) after");
+    defer nb.deinit();
+    printStrs(init, "neighbors(gb) after deletes:", &nb);
+    var t3 = nodes.traverse("ga", "parent_of", 2) catch |e| return fail(e, "traverse after");
+    defer t3.deinit();
+    printStrs(init, "traverse(ga, 2 hops) after:", &t3);
+    return 0;
+}
+```
+
+<!-- corvid-examples:graph END -->
+### Geo (radius, bbox, nearest)
+
+<!-- corvid-examples:geo BEGIN -->
+
+```zig
+fn putCity(places: corvid.Collection, key: []const u8, name: []const u8, lat: f64, lon: f64) !void {
+    var doc = corvid.Value.map();
+    defer doc.deinit();
+    var n = try corvid.Value.text(name);
+    try doc.put("name", &n);
+    var loc = corvid.Value.array();
+    // put()/push() move each value into its parent as they go
+    var la = corvid.Value.float(lat);
+    try loc.push(&la);
+    var lo = corvid.Value.float(lon);
+    try loc.push(&lo);
+    try doc.put("loc", &loc);
+    try places.insert(key, doc);
+}
+
+fn printHits(init: std.process.Init, label: []const u8, hits: *corvid.GeoHits) void {
+    var buf: [512]u8 = undefined;
+    var w = std.Io.File.stdout().writer(init.io, &buf);
+    w.interface.print("{s:<32} [", .{label}) catch {};
+    while (hits.next()) |hit| {
+        // geo cursors carry their document; neighborsWeighted leaves it null
+        if (hit.doc) |d| {
+            const name = d.mapGet("name").?.textRef() orelse "?";
+            w.interface.print("{s}={d:.6}km({s}) ", .{ hit.key, hit.distance_km, name }) catch {};
+        } else {
+            w.interface.print("{s}={d:.6} ", .{ hit.key, hit.distance_km }) catch {};
+        }
+    }
+    w.interface.print("]\n", .{}) catch {};
+    w.interface.flush() catch {};
+}
+
+pub fn main(init: std.process.Init) u8 {
+    var db = corvid.Db.openMemory() catch |e| return fail(e, "open");
+    defer db.deinit();
+    var places = db.collection("places") catch |e| return fail(e, "collection");
+    defer places.deinit();
+
+    //               key        lat     lon     (name for the printout)
+    const cities = [_]struct { key: []const u8, name: []const u8, lat: f64, lon: f64 }{
+        .{ .key = "berlin", .name = "Berlin", .lat = 52.520, .lon = 13.405 },
+        .{ .key = "potsdam", .name = "Potsdam", .lat = 52.396, .lon = 13.064 },
+        .{ .key = "hamburg", .name = "Hamburg", .lat = 53.551, .lon = 9.994 },
+        .{ .key = "munchen", .name = "München", .lat = 48.137, .lon = 11.575 },
+    };
+    for (cities) |city| {
+        putCity(places, city.key, city.name, city.lat, city.lon) catch |e| return fail(e, "insert");
+    }
+
+    var r = places.geoWithinRadius("loc", 52.52, 13.40, 600.0) catch |e| return fail(e, "geo_within_radius");
+    defer r.deinit();
+    printHits(init, "radius 600km from Berlin:", &r);
+
+    var b = places.geoWithinBbox("loc", 47.0, 5.0, 55.0, 15.0) catch |e| return fail(e, "geo_within_bbox");
+    defer b.deinit();
+    printHits(init, "bbox (47..55, 5..15):", &b);
+
+    var n2 = places.geoNearest("loc", 52.52, 13.40, 2) catch |e| return fail(e, "geo_nearest");
+    defer n2.deinit();
+    printHits(init, "nearest 2 to Berlin:", &n2);
+    return 0;
+}
+```
+
+<!-- corvid-examples:geo END -->
+
+
+
+
+
+## API at a glance
+
+Generated from the binding's `docs/SURFACE.tsv` (every engine
+construct at the pinned tag mapped or N/A with a reason) — regenerated
+by the docs sync, so it cannot drift.
+
+<!-- corvid-api-glance BEGIN -->
+
+| API group | engine constructs | proven by |
+|---|---|---|
+| `corvid.Value constructors + corvid.Value.kind (corvid.ValueKind)` | 10 | golden:values.txt:VTYPE |
+| `corvid.ValueView.arrayGet/mapGet` | 2 | golden:values.txt:VNEST |
+| `corvid.ValueView.asBool/asInt/asFloat, textRef/bytesRef/vectorRef` | 6 | golden:values.txt:VAS_*/V*_REF |
+| `corvid.Cmp (.eq/.ne/.lt/.le/.gt/.ge)` | 7 | golden:queries.txt:QF_* |
+| `corvid.Pred constructor family (+ andOp/orOp/notOp moves)` | 27 | golden:queries.txt:QF_* + golden:mutations.txt:DELETE_IN |
+| `corvid.Metric enum (.cosine/.dot/.l2)` | 4 | golden:queries.txt:QVEC |
+| `corvid.Quant enum (.none/.binary/.scalar)` | 4 | golden:schema.txt:IDX_VEC_Q |
+| `corvid.Error + corvid.lastErrorCode/lastErrorMessage` | 1 | golden:mutations.txt:INSERT_ERR |
+| `corvid.ErrCode via corvid.lastErrorCode` | 1 | errcodes |
+| `corvid.Error / corvid.ErrCode (code 1)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `corvid.Error / corvid.ErrCode (code 2)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `corvid.Error / corvid.ErrCode (code 3)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `corvid.Error / corvid.ErrCode (code 4)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `corvid.Error / corvid.ErrCode (code 5)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `corvid.Error / corvid.ErrCode (code 6)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `corvid.Error / corvid.ErrCode (code 7)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `corvid.Error / corvid.ErrCode (code 8)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `corvid.Error / corvid.ErrCode (code 9)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `corvid.Error / corvid.ErrCode (code 10)` | 1 | errcodes (frozen-table _Static_assert test); golden:mutations.txt:INSERT_ERR(err:10) |
+| `corvid.Error / corvid.ErrCode (code 11)` | 1 | errcodes (frozen-table _Static_assert test); golden:mutations.txt:INSERT_ERR(err:11) |
+| `corvid.Error / corvid.ErrCode (code 12)` | 1 | errcodes (frozen-table _Static_assert test); golden:mutations.txt:UPDATE_ABORT(err:12) |
+| `corvid.Error / corvid.ErrCode (code 13)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `corvid.Error / corvid.ErrCode (code 14)` | 1 | errcodes (frozen-table _Static_assert test); golden:schema.txt:IDX_PQ_ERR(err:14) |
+| `corvid.Error / corvid.ErrCode (code 15)` | 1 | errcodes (frozen-table _Static_assert test); golden:schema.txt:SCHEMA_ERR(err:15) |
+| `corvid.Error / corvid.ErrCode (code 16)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `corvid.Error / corvid.ErrCode (code 17)` | 1 | errcodes (frozen-table _Static_assert test); golden:admin.txt:BACKUP_DUP(err:17) |
+| `corvid.Error / corvid.ErrCode (code 18)` | 1 | errcodes (frozen-table _Static_assert test) |
+| `corvid.Rows.next cursor (corvid.Row)` | 1 | golden:queries.txt |
+| `corvid.Collection.query (corvid.Query builder)` | 2 | golden:queries.txt |
+| `corvid.Query.filter (consumes the corvid.Pred)` | 1 | golden:queries.txt:QF_COUNT |
+| `corvid.Query.vector` | 1 | golden:queries.txt:QVEC |
+| `corvid.Query.text` | 1 | golden:queries.txt:QTEXT |
+| `corvid.Query.fuseRrf` | 1 | golden:queries.txt:HYBRID_F |
+| `corvid.Query.rerankMmr` | 1 | golden:queries.txt:HYBRID |
+| `corvid.Query.limit` | 1 | golden:queries.txt:ORDER_BY |
+| `corvid.Query.offset` | 1 | golden:queries.txt:ORDER_BY |
+| `corvid.Query.orderBy/orderByDesc` | 1 | golden:queries.txt:ORDER_BY |
+| `corvid.Query.approx` | 1 | golden:queries.txt:APPROX |
+| `corvid.Query.select` | 1 | golden:queries.txt:SELECT |
+| `corvid.Query.count` | 1 | golden:queries.txt:AGG_COUNT |
+| `corvid.Query.groupCount` | 1 | golden:queries.txt:AGG_GCOUNT |
+| `corvid.Query.sum` | 1 | golden:queries.txt:AGG_SUM |
+| `corvid.Query.avg` | 1 | golden:queries.txt:AGG_AVG |
+| `corvid.Query.min` | 1 | golden:queries.txt:AGG_MIN |
+| `corvid.Query.max` | 1 | golden:queries.txt:AGG_MAX |
+| `corvid.Query.countDistinct` | 1 | golden:queries.txt:AGG_DISTINCT |
+| `corvid.Query.groupSum` | 1 | golden:queries.txt:AGG_GSUM |
+| `corvid.Query.groupAvg` | 1 | golden:queries.txt:AGG_GAVG |
+| `corvid.Query.run (consumes the builder)` | 1 | golden:queries.txt:QVEC |
+| `corvid.Db.open/openMemory handle (deinit)` | 1 | golden:admin.txt:FILEDB |
+| `corvid.Db.open/openMemory/collection/collections/backup/compact + corvid.Collection.deinit` | 6 | golden:admin.txt (COLLECTIONS/BACKUP/COMPACT) |
+| `corvid.Collection handle family (deinit)` | 1 | golden:mutations.txt:COLL |
+| `corvid.Collection.insert/update/patch/compareAndSet` | 4 | golden:mutations.txt (INSERT/UPDATE/PATCH/CAS) |
+| `corvid.Collection.scan callback + early stop` | 1 | golden:mutations.txt:SCAN/SCAN_STOP |
+| `corvid.Collection.len (== 0 for empty)` | 2 | golden:mutations.txt:LEN |
+| `corvid.Collection.putMany (corvid.Kv)` | 1 | golden:mutations.txt:PUTMANY + golden:schema.txt:PUTMANY_ROLLBACK |
+| `corvid.Collection.insertAuto` | 1 | golden:mutations.txt:INSERT_AUTO |
+| `corvid.Collection.get (+ corvid.Value/ValueView.mapKeys)` | 1 | golden:mutations.txt:GET/GET_KEYS |
+| `corvid.Collection.delete/deleteWhere/deleteBatch` | 3 | golden:mutations.txt (DELETE/DELETE_WHERE/DELETE_BATCH) |
+| `corvid.Collection.scan (full walk)` | 1 | golden:mutations.txt:SCAN |
+| `corvid.Collection.page (corvid.Page)` | 2 | golden:mutations.txt:PAGE |
+| `corvid.Row.score from corvid.Rows.next` | 2 | golden:queries.txt:QVEC; golden:queries.txt:QTEXT |
+| `corvid.Collection.phraseSearch (the v0.3.0 direct positional fn) over the corvid.Rows cursor` | 1 | golden:queries.txt:PHRASE |
+| `corvid.Query.fuseRrf default k=60` | 1 | golden:queries.txt:HYBRID |
+| `corvid.GeoHits.next cursor (corvid.GeoHit)` | 1 | golden:geo.txt:RADIUS/NEAREST/BBOX |
+| `corvid.Collection.geoWithinRadius/geoNearest/geoWithinBbox/createGeoIndex` | 4 | golden:geo.txt (RADIUS/NEAREST/BBOX/IDX_GEO) |
+| `corvid.Collection.link/linkWeighted/unlink/neighbors/inNeighbors/neighborsWeighted/traverse` | 7 | golden:graph.txt |
+| `corvid.Collection.createScalarIndex/createCompoundIndex/createTextIndex/createTextIndexOndisk/createGeoIndex/createVectorIndex/createVectorIndexQuantized/createVectorIndexOndisk/createVectorIndexOndiskQuantized/createVectorIndexPq/createVectorIndexOndiskPq` | 10 | golden:schema.txt:IDX_* |
+| `corvid.FieldType enum` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA |
+| `corvid.Collection.setSchema/schema + corvid.SchemaIter` | 10 | golden:schema.txt:SET_SCHEMA/SCHEMA/SCHEMA_ERR |
+| `corvid.Collection.insertWithTtl/setTtl/getTtl/purgeExpired` | 4 | golden:mutations.txt (INSERT_TTL/SET_TTL/GET_TTL/PURGE) |
+| `corvid.Db.dumpToPath/loadFromPath/loadFromPathWithRenames` | 3 | golden:admin.txt (DUMP/LOAD/LOAD_RENAMES) |
+
+151 engine constructs are deliberately not exposed (each with its reason in the repo's `docs/SURFACE.tsv`).
+
+<!-- corvid-api-glance END -->
+
+## API reference
+
+Zig has no hosted doc service yet; the [README + docs/PLAN.md](https://github.com/corvid-db/corvid-zig) carry the API mapping,
+
 
 ## The correctness floor
 
