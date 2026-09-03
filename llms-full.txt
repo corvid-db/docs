@@ -5984,7 +5984,7 @@ GitHub release and sha256-verified; `deps/` is never committed.
 The v0.2.0 darwin dylibs shipped with the release CI runner's absolute path
 as their install name, so binaries linked against them aborted at launch.
 corvid-c caught this (finding F1 in its plan); the engine fixed its release
-pipeline; **every pin since v0.2.1 — the current is v0.3.2 — is clean**:
+pipeline; **every pin since v0.2.1 — the current is v0.4.1 — is clean**:
 `otool -D` shows
 `@rpath/libcorvid.dylib`, and the golden suite runs 267/267 with no
 workarounds. v0.2.1's Linux `.so` also gained its SONAME (finding F2,
