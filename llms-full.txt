@@ -6437,11 +6437,24 @@ to the wrapper types.
 
 ## Install
 
-From source (Maven Central publish pending — it rides the engine's
-release cadence; see the repo README):
+```kotlin
+dependencies {
+    implementation("io.github.corvid-db:corvid-jvm:0.4.0")
+    runtimeOnly("io.github.corvid-db:corvid-jvm:0.4.0:macos-arm64")
+    // classifiers: macos-arm64 | macos-x64 | linux-x64 | linux-arm64 | windows-x64
+}
+```
+
+Published to **Maven Central** — the jars are self-contained: the
+platform classifier bundles the JNI shim AND the engine cdylib, and
+the loader extracts both to a temp dir and `System.load()`s them, so a
+consumer needs nothing else (no fetch, no compiler, no
+`java.library.path`). The version rides the engine's release cascade.
+
+Building from source instead (development):
 
 ```sh
-./fetch.sh                    # fetch + sha256-verify corvid v0.3.2
+./fetch.sh                    # fetch + sha256-verify corvid v0.4.0
 ./scripts/build-native.sh     # compile the JNI shim into build/native
 ./gradlew test                # the golden suite (267 executable lines)
 ./gradlew examples            # the six-example tour
@@ -7395,7 +7408,7 @@ binding's public API.
 | [corvid-zig](/bindings/corvid-zig/) | Zig (@cImport of the published cdylib) | live — golden-suite CI + examples tour (text search exercises the phrase API), move-safe handles and typed borrows, no Rust toolchain required |
 | [corvid-dart](/bindings/corvid-dart/) | Dart (dart:ffi + ffigen over the published cdylib) | live — golden-suite CI + examples tour + an ffigen drift gate, Db/Collection/Query with NativeFinalizer backstops, no Rust toolchain required; **pub.dev** `corvid` |
 | [corvid-php](/bindings/corvid-php/) | PHP (native extension over the published cdylib) | live — golden-suite CI (NTS 8.4/8.3 + a linux ZTS leg) + examples tour, refcounted handle lifetimes with the honest FPM story; **Packagist** `corvid/php-corvid`, installed with PIE |
-| [corvid-jvm](/bindings/corvid-jvm/) | Kotlin/Java (JNI shim over the published cdylib) | live — golden-suite CI (linux/macos/windows × JDK 21/17) + examples tour, Kotlin-first API with `AutoCloseable` handles and `CorvidException`, Java consumes the same artifact; consume from source (Maven Central not yet) |
+| [corvid-jvm](/bindings/corvid-jvm/) | Kotlin/Java (JNI shim over the published cdylib) | live — golden-suite CI (linux/macos/windows × JDK 21/17) + examples tour, Kotlin-first API with `AutoCloseable` handles and `CorvidException`, Java consumes the same artifact; **Maven Central** `io.github.corvid-db:corvid-jvm` (self-contained per-platform jars) |
 | corvid (Rust) | Rust | the engine itself — **crates.io** `corvid-db`, native API |
 
 Every live binding ships the same **examples tour** — six runnable
