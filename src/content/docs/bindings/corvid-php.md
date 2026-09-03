@@ -46,7 +46,7 @@ NaN / ±INF / -0.0 cross bit-exact.
 From the pinned release artifacts:
 
 ```sh
-./fetch.sh                    # fetch + sha256-verify corvid v0.3.2 into deps/current
+./fetch.sh                    # fetch + sha256-verify corvid v0.4.1 into deps/current
 ./scripts/build-ext.sh        # phpize + configure + make (needs PHP 8.3+ dev headers)
 php -d extension=ext/corvid/modules/corvid.so examples/quickstart.php
 ```
@@ -505,7 +505,7 @@ release's copies at fetch time, so a bad artifact is a loud fetch
 failure, never a silent skip.
 
 On top sits `docs/SURFACE.tsv` — every construct of the engine's public
-surface (327 rows at this pin) resolved to the PHP API exposing it plus
+surface (331 rows at this pin) resolved to the PHP API exposing it plus
 the golden line that proves it, or `N/A` with the ABI's §9 reason,
 gated in CI (`scripts/surface-gate.sh`).
 

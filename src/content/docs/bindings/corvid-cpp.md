@@ -10,7 +10,7 @@ binding: a **header-first RAII library** over the frozen C ABI (one
 public header, `corvid/corvid.hpp`, plus one implementation TU), linking
 the **published FFI artifacts** — the platform cdylib, the generated
 header, and the golden fixtures — downloaded from a pinned engine
-release (v0.3.2) and sha256-verified. No engine checkout, no Rust
+release (v0.4.1) and sha256-verified. No engine checkout, no Rust
 toolchain, no dependencies beyond the C++ standard library.
 
 **When to choose this binding:** you are writing modern C++ (C++20
@@ -36,7 +36,7 @@ PowerShell):
 
 ```sh
 git clone https://github.com/corvid-db/corvid-cpp && cd corvid-cpp
-./fetch.sh          # download + sha256-verify corvid v0.3.2 into deps/
+./fetch.sh          # download + sha256-verify corvid v0.4.1 into deps/
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build --output-on-failure
@@ -558,12 +558,12 @@ Header-first: the [corvid/ headers](https://github.com/corvid-db/corvid-cpp/tree
 Every binding replays the engine's golden fixtures; corvid-cpp ports
 the C harness itself to C++ (`test/golden.cpp`) and drives the
 **downloaded** cdylib over the release's fixtures — 267 executable
-lines at v0.3.2 (byte-identical with v0.3.0's — unchanged through v0.3.2), including the additive
+lines (unchanged since v0.3.0), including the additive
 map-keys and phrase ops. If the
 published `.so`/`.dylib`/`.dll`, header, or fixtures disagree, that CI
 leg reddens where the engine's own suite stayed green. On top of the
-golden port, `test/raii.cpp` exercises the wrapper's own surface (145
-checks), and `docs/SURFACE.tsv` resolves all 327 engine constructs
-(180 mapped / 147 N/A-with-reason) against a CI gate.
+golden port, `test/raii.cpp` exercises the wrapper's own surface (157
+checks), and `docs/SURFACE.tsv` resolves all 331 engine constructs
+(180 mapped / 151 N/A-with-reason) against a CI gate.
 
 Next: the [C ABI reference](/ffi/overview/) underneath every binding.
